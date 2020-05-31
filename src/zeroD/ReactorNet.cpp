@@ -6,8 +6,11 @@
 #include "cantera/zeroD/ReactorNet.h"
 #include "cantera/zeroD/FlowDevice.h"
 #include "cantera/zeroD/Wall.h"
+#include "fmt/format.h"
+
 
 #include <cstdio>
+#include <regex>
 
 using namespace std;
 
@@ -199,9 +202,31 @@ double ReactorNet::step()
     } else if (!m_integrator_init) {
         reinitialize();
     }
-    m_time = m_integ->step(m_time + 1.0);
-    updateState(m_integ->solution());
-    return m_time;
+    try {m_time = m_integ->step(m_time + 1.0);
+        updateState(m_integ->solution());
+        return m_time;
+    } catch (CanteraError& err) {
+        // use regex to find out the component indices
+        vector<int> arr;
+        smatch sm;
+        regex r("([[:digit:]]+):");
+        string str = err.what();
+        string err_component_names = "";
+        while (regex_search(str, sm, r)){
+            int x = 0;
+            stringstream index(sm[1]);
+            index >> x;
+            arr.push_back(x);
+            str = sm.suffix().str();
+        }
+        for (auto idx:arr){
+            string err_idx_name = fmt::format("{}: {}\n", idx, ComponentNameFromCVodeError(idx));
+            err_component_names.append(err_idx_name);
+        }
+        string err_message = err.what() + err_component_names;
+        throw CanteraError("ReactorNet:Complementary CVODE error information", err_message);
+    }
+    return 0;
 }
 
 void ReactorNet::getEstimate(double time, int k, double* yest)
@@ -349,6 +374,32 @@ std::string ReactorNet::componentName(size_t i) const
     }
     throw CanteraError("ReactorNet::componentName", "Index out of bounds");
 }
+
+std::string ReactorNet::ComponentNameFromCVodeError(size_t i) const
+{
+    string const_p_reactor = "ConstPressureReactor";
+    string ideal_const_p_reactor = "IdealGasConstPressureReactor";
+    string flow_reactor = "FlowReactor";
+    string reactor_ = "Reactor";
+    string ideal_reactor = "IdealGasReactor";
+    for (auto r : m_reactors) {
+        if (i < r->neq()) {
+            if (r->typeStr() == ideal_const_p_reactor || r->typeStr() == const_p_reactor){
+                int index = i + 2;
+                return r->name() + ": " + r->componentName(index);
+            } else if (r->typeStr() == reactor_ || r->typeStr() == flow_reactor || r->typeStr() == ideal_reactor){
+                int index = i + 3;
+                return r->name() + ": " + r->componentName(index);
+            } else {
+                return r->name() + ": " + r->componentName(i);
+            }
+            
+        } 
+    }
+    string err_message = fmt::format("Index {} out of bounds {}", i);
+    return err_message;
+}
+
 
 size_t ReactorNet::registerSensitivityParameter(
     const std::string& name, double value, double scale)

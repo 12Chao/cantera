@@ -197,6 +197,9 @@ public:
     //! component, e.g. `'reactor1: CH4'`.
     std::string componentName(size_t i) const;
 
+    //! Return the component name in the reactor according to the index shown in CVODES error message
+    std::string ComponentNameFromCVodeError(size_t i) const;
+
     //! Used by Reactor and Wall objects to register the addition of
     //! sensitivity parameters so that the ReactorNet can keep track of the
     //! order in which sensitivity parameters are added.
