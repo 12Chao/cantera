@@ -220,7 +220,7 @@ double ReactorNet::step()
             str = sm.suffix().str();
         }
         for (auto idx:arr){
-            string err_idx_name = fmt::format("{}: {}\n", idx, ComponentNameFromCVodeError(idx));
+            string err_idx_name = fmt::format("{}: {}\n", idx, componentName(idx));
             err_component_names.append(err_idx_name);
         }
         string err_message = err.what() + err_component_names;
@@ -373,31 +373,6 @@ std::string ReactorNet::componentName(size_t i) const
         }
     }
     throw CanteraError("ReactorNet::componentName", "Index out of bounds");
-}
-
-std::string ReactorNet::ComponentNameFromCVodeError(size_t i) const
-{
-    string const_p_reactor = "ConstPressureReactor";
-    string ideal_const_p_reactor = "IdealGasConstPressureReactor";
-    string flow_reactor = "FlowReactor";
-    string reactor_ = "Reactor";
-    string ideal_reactor = "IdealGasReactor";
-    for (auto r : m_reactors) {
-        if (i < r->neq()) {
-            if (r->typeStr() == ideal_const_p_reactor || r->typeStr() == const_p_reactor){
-                int index = i + 2;
-                return r->name() + ": " + r->componentName(index);
-            } else if (r->typeStr() == reactor_ || r->typeStr() == flow_reactor || r->typeStr() == ideal_reactor){
-                int index = i + 3;
-                return r->name() + ": " + r->componentName(index);
-            } else {
-                return r->name() + ": " + r->componentName(i);
-            }
-            
-        } 
-    }
-    string err_message = fmt::format("Index {} out of bounds {}", i);
-    return err_message;
 }
 
 
