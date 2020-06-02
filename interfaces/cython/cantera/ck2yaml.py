@@ -865,6 +865,15 @@ class Parser:
         if not composition:
             raise InputError("Error parsing elemental composition for "
                              "species '{}'", species)
+        else:
+            for symbol in composition.keys():
+                # Here it checks if there is a number in the symbol string and if this is
+                # in the element list as a customized element
+                if any(map(str.isdigit, symbol)) == True and symbol not in self.elements:
+                    raise InputError("Error parsing elemental composition for "
+                             "species thermo entry\n{}"
+                             "\n the first line has an incorrect format", "".join(lines))
+
 
         # Extract the NASA polynomial coefficients
         # Remember that the high-T polynomial comes first!

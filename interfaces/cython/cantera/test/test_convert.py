@@ -458,6 +458,14 @@ class ck2yamlTest(converterTestCommon, utilities.CanteraTest):
         self.assertEqual(desc, 'This is an alternative description.')
         for key in ['foo', 'bar']:
             self.assertIn(key, yml.keys())
+    
+    def test_error_for_long_element_number(self):
+        try:
+            self.convert('long_ele_num_mech.txt', thermo='long_ele_num_thermo.txt',
+                        output='long_ele_num.yaml')
+        except Exception as e:
+            self.assertIn('the first line has an incorrect format', str(e))
+
 
 
 class CtmlConverterTest(utilities.CanteraTest):
