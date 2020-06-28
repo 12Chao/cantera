@@ -90,20 +90,40 @@ Plog::Plog(const std::multimap<double, Arrhenius>& rates)
 
 void Plog::validate(const std::string& equation)
 {
+    std::vector<std::string> error_reactions;
+    std::vector<double> pressures;
+    int index = 0;
     double T[] = {200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0};
+
+    // Put all the pressures in a vector to call them later accordingly
+    // avoid to use "++iter" like the original code to iterate 2 item every time 
+    for (auto iter = pressures_.begin(); iter->first < 1000; iter++) {
+        pressures.push_back(std::exp((iter)->first));
+     }
     for (auto iter = pressures_.begin(); iter->first < 1000; iter++) {
         update_C(&iter->first);
+        index += 1;
         for (size_t i=0; i < 6; i++) {
             double k = updateRC(log(T[i]), 1.0/T[i]);
+            // std::cout<<equation<<' '<<std::exp((iter)->first)<<' '<<pressures[index-1]<<' '<<T[i] <<' '<<k<<std::endl;
             if (!(k >= 0)) {
                 // k is NaN. Increment the iterator so that the error
                 // message will correctly indicate that the problematic rate
                 // expression is at the higher of the adjacent pressures.
-                throw CanteraError("Plog::validate",
-                    "Invalid rate coefficient for reaction '{}'\nat P = {}, T = {}",
-                    equation, std::exp((++iter)->first), T[i]);
-            }
+                 // expression is at the higher of the adjacent pressures.
+                std::string err_PLOG = fmt::format("\nInvalid rate coefficient for reaction '{}'\nat P = {} , T = {}",
+                    equation, pressures[index], T[i]);
+                error_reactions.push_back(err_PLOG);
+             }
+         }
+     }
+    if (!error_reactions.empty()){
+        std::string PLOG_errors;
+        for (size_t i=0; i < error_reactions.size(); i++){
+            PLOG_errors += error_reactions.at(i);
         }
+        warn_user("Plog::validate",
+            "\n{}\n", PLOG_errors);
     }
 }
 
