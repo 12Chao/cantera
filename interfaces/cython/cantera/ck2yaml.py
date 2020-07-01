@@ -61,6 +61,9 @@ except ImportError:
 
 BlockMap = yaml.comments.CommentedMap
 
+# url to cantera tutorial about Chemkin syntax instruction 
+url = "https://cantera.org/tutorials/ck2yaml-tutorial.html#debugging-common-errors-in-ck-files"
+
 logger = logging.getLogger(__name__)
 loghandler = logging.StreamHandler(sys.stdout)
 logformatter = logging.Formatter('%(message)s')
@@ -673,10 +676,12 @@ class TransportData:
         except ValueError:
             raise InputError(
                 "Bad geometry flag '{}' for species '{}', is the flag a float "
-                "or character? It should be an integer.", geometry, label)
+                "or character? It should be an integer. "
+                "Please check {} for correct Chemkin syntax", geometry, label, url)
         if geometry not in (0, 1, 2):
-            raise InputError("Bad geometry flag '{}' for species '{}'",
-                             geometry, label)
+            raise InputError("Bad geometry flag '{}' for species '{}' "
+                             "Please check {} for correct Chemkin syntax"
+                             "", geometry, label, url)
 
         self.geometry = self.geometry_flags[int(geometry)]
         self.well_depth = float(well_depth)
@@ -872,7 +877,20 @@ class Parser:
 
         if not composition:
             raise InputError("Error parsing elemental composition for "
-                             "species '{}'", species)
+                             "species '{}', Please check {} for correct Chemkin syntax"
+                             "", species, url)
+        
+        for symbol in composition.keys():
+            # Some CHEMKIN input files may have quantities of elements with
+            # more than 3 digits. This violates the column-based input format
+            # standard, so the entry cannot be read and we need to raise a
+            # more useful error message.
+            if any(map(str.isdigit, symbol)) and symbol not in self.elements:
+                raise InputError("Error parsing elemental composition for "
+                                 "species thermo entry:\n{}\nElement amounts "
+                                 "can have no more than 3 digits.",
+                                 "Please check {} for correct Chemkin syntax"
+                                 "", lines, url)
 
         # Extract the NASA polynomial coefficients
         # Remember that the high-T polynomial comes first!
@@ -941,8 +959,9 @@ class Parser:
                           fortFloat(C[64:80])]
                 polys.append((Trange, coeffs))
         except (IndexError, ValueError) as err:
-            raise InputError('Error while reading thermo entry for species {}:\n{}',
-                             species, err)
+            raise InputError('Error while reading thermo entry for species {}:\n{}'
+                             'Please check {} about the correct Chemkin syntax.'
+                             '',species, err, url)
 
         thermo = Nasa9(data=polys, note=note)
 
@@ -1031,8 +1050,9 @@ class Parser:
                 try:
                     locs[j] = float(token), 'coeff'
                 except ValueError:
-                    raise InputError('Unexpected token "{}" in reaction expression "{}".',
-                                     token, original_reaction)
+                    raise InputError('Unexpected token "{}" in reaction expression "{}"'
+                                     'Please check {} about the correct Chemkin syntax'
+                                     '', token, original_reaction, url)
 
         reactants = []
         products = []
@@ -1291,7 +1311,8 @@ class Parser:
                  surface]
         if sum(bool(t) for t in tests) > 1:
             raise InputError('Reaction {} contains parameters for more than '
-                'one reaction type.', original_reaction)
+                'one reaction type. Please check {} about the correct Chemkin syntax'
+                '', original_reaction, url)
 
         if cheb_coeffs:
             if Tmin is None or Tmax is None:
