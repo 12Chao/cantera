@@ -290,8 +290,11 @@ public:
             }
             log_k2 = std::log(k);
         }
-
-        return std::exp(log_k1 + (log_k2-log_k1) * (logP_-logP1_) * rDeltaP_);
+        if (logP_ == logP1_) {
+            return std::exp(log_k1);
+        } else {
+            return std::exp(log_k1 + (log_k2-log_k1) * (logP_-logP1_) * rDeltaP_);
+        }
     }
 
     //! Check to make sure that the rate expression is finite over a range of
