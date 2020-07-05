@@ -140,6 +140,11 @@ cdef extern from "cantera/base/Solution.h" namespace "Cantera":
 
 
 cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
+    ctypedef enum ThermoBasis:
+        mass "Cantera::ThermoBasis::mass",
+        molar "Cantera::ThermoBasis::molar"
+
+cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
     cdef cppclass CxxThermoPhase "Cantera::ThermoPhase":
         CxxThermoPhase()
 
@@ -268,6 +273,12 @@ cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
         void setState_Psat(double P, double x) except +translate_exception
         void setState_TPQ(double T, double P, double Q) except +translate_exception
 
+        void setMixtureFraction(double mixFrac, const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
+        double mixtureFraction(const double* fuelComp, const double* oxComp, ThermoBasis basis, string element) except +translate_exception
+        void setEquivalenceRatio(double phi, const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
+        double equivalenceRatio(const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
+        double equivalenceRatio() except +translate_exception
+        double stoichAirFuelRatio(const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
 
 cdef extern from "cantera/thermo/IdealGasPhase.h":
     cdef cppclass CxxIdealGasPhase "Cantera::IdealGasPhase"
@@ -613,6 +624,7 @@ cdef extern from "cantera/zerodim.h" namespace "Cantera":
     cdef cppclass CxxFlowDevice "Cantera::FlowDevice":
         CxxFlowDevice()
         string typeStr()
+        double massFlowRate() except +translate_exception
         double massFlowRate(double) except +translate_exception
         cbool install(CxxReactorBase&, CxxReactorBase&) except +translate_exception
         void setPressureFunction(CxxFunc1*) except +translate_exception

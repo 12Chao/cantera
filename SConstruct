@@ -79,7 +79,9 @@ if 'clean' in COMMAND_LINE_TARGETS:
     removeDirectory('interfaces/cython/Cantera.egg-info')
     removeDirectory('interfaces/python_minimal/Cantera_minimal.egg-info')
     for name in os.listdir('interfaces/cython/cantera/data/'):
-        if name != '__init__.py':
+        if os.path.isdir('interfaces/cython/cantera/data/' + name):
+            removeDirectory('interfaces/cython/cantera/data/' + name)
+        elif name != '__init__.py':
             removeFile('interfaces/cython/cantera/data/' + name)
     removeDirectory('interfaces/cython/cantera/test/data/test_subdir')
     for name in os.listdir('interfaces/cython/cantera/test/data/'):
@@ -594,11 +596,13 @@ config_options = [
         defaults.warningFlags),
     (
         'extra_inc_dirs',
-        """Additional directories to search for header files (colon-separated list).""",
+        """Additional directories to search for header files, with multiple
+        directories separated by colons (*nix, macOS) or semicolons (Windows)""",
         ''),
     (
         'extra_lib_dirs',
-        """Additional directories to search for libraries (colon-separated list).""",
+        """Additional directories to search for libraries, with multiple
+        directories separated by colons (*nix, macOS) or semicolons (Windows)""",
         ''),
     PathVariable(
         'boost_inc_dir',
@@ -755,8 +759,17 @@ elif env['env_vars']:
             print('WARNING: failed to propagate environment variable', repr(name))
             print('         Edit cantera.conf or the build command line to fix this.')
 
-env['extra_inc_dirs'] = [d for d in env['extra_inc_dirs'].split(':') if d]
-env['extra_lib_dirs'] = [d for d in env['extra_lib_dirs'].split(':') if d]
+# @todo: Remove this Warning after Cantera 2.5
+if os.pathsep == ';':
+    for dirs in (env['extra_inc_dirs'], env['extra_lib_dirs']):
+        if re.search(r':\w:', dirs):
+            print('ERROR: Multiple entries in "extra_inc_dirs" and "extra_lib_dirs" '
+                  'should be separated by semicolons (;) on Windows. Use of OS-specific '
+                  'path separator introduced in Cantera 2.5.')
+            sys.exit(1)
+
+env['extra_inc_dirs'] = [d for d in env['extra_inc_dirs'].split(os.pathsep) if d]
+env['extra_lib_dirs'] = [d for d in env['extra_lib_dirs'].split(os.pathsep) if d]
 
 env.Append(CPPPATH=env['extra_inc_dirs'],
            LIBPATH=env['extra_lib_dirs'])
@@ -770,6 +783,9 @@ if env['CC'] == 'cl':
                       'if exist ${TARGET}.manifest mt.exe -nologo -manifest ${TARGET}.manifest -outputresource:$TARGET;1']
     env['SHLINKCOM'] = [env['SHLINKCOM'],
                         'if exist ${TARGET}.manifest mt.exe -nologo -manifest ${TARGET}.manifest -outputresource:$TARGET;2']
+    env['FORTRAN_LINK'] = 'link'
+else:
+    env['FORTRAN_LINK'] = '$FORTRAN'
 
 if env['boost_inc_dir']:
     env.Append(CPPPATH=env['boost_inc_dir'])
@@ -1028,8 +1044,12 @@ print('INFO: Found Eigen version {}'.format(env['EIGEN_LIB_VERSION']))
 
 # Determine which standard library to link to when using Fortran to
 # compile code that links to Cantera
-env['HAS_GLIBCXX'] = conf.CheckDeclaration('__GLIBCXX__', '#include <iostream>', 'C++')
-env['HAS_LIBCPP'] = conf.CheckDeclaration('_LIBCPP_VERSION', '#include <iostream>', 'C++')
+if conf.CheckDeclaration('__GLIBCXX__', '#include <iostream>', 'C++'):
+    env['cxx_stdlib'] = ['stdc++']
+elif conf.CheckDeclaration('_LIBCPP_VERSION', '#include <iostream>', 'C++'):
+    env['cxx_stdlib'] = ['c++']
+else:
+    env['cxx_stdlib'] = []
 
 env['HAS_CLANG'] = conf.CheckDeclaration('__clang__', '', 'C++')
 
@@ -1596,6 +1616,14 @@ for xml in mglob(env, 'data/inputs', 'xml'):
 for yaml in mglob(env, "data", "yaml"):
     dest = pjoin("build", "data", yaml.name)
     build(env.Command(dest, yaml.path, Copy("$TARGET", "$SOURCE")))
+for subdir in os.listdir('data'):
+    if os.path.isdir(pjoin('data', subdir)):
+        for yaml in mglob(env, pjoin("data", subdir), "yaml"):
+            dest = pjoin("build", "data", subdir, yaml.name)
+            if not os.path.exists(pjoin("build", "data", subdir)):
+                os.makedirs(pjoin("build", "data", subdir))
+            build(env.Command(dest, yaml.path, Copy("$TARGET", "$SOURCE")))
+
 
 if addInstallActions:
     # Put headers in place
@@ -1603,7 +1631,7 @@ if addInstallActions:
     install(env.RecursiveInstall, '$inst_incdir', 'include/cantera')
 
     # Data files
-    install('$inst_datadir', mglob(env, 'build/data', 'cti', 'xml', 'yaml'))
+    install(env.RecursiveInstall, '$inst_datadir', 'build/data')
 
 
 ### List of libraries needed to link to Cantera ###
@@ -1672,24 +1700,24 @@ if env['matlab_toolbox'] == 'y':
 if env['doxygen_docs'] or env['sphinx_docs']:
     SConscript('doc/SConscript')
 
-if 'samples' in COMMAND_LINE_TARGETS or addInstallActions:
-    VariantDir('build/samples', 'samples', duplicate=0)
-    sampledir_excludes = ['\\.o$', '^~$', '\\.in', 'SConscript']
-    SConscript('build/samples/cxx/SConscript')
+# Sample programs (also used from test_problems/SConscript)
+VariantDir('build/samples', 'samples', duplicate=0)
+sampledir_excludes = ['\\.o$', '^~$', '\\.in', 'SConscript']
+SConscript('build/samples/cxx/SConscript')
 
-    # Install C++ samples
-    install(env.RecursiveInstall, '$inst_sampledir/cxx',
-            'samples/cxx', exclude=sampledir_excludes)
+# Install C++ samples
+install(env.RecursiveInstall, '$inst_sampledir/cxx',
+        'samples/cxx', exclude=sampledir_excludes)
 
-    if env['f90_interface'] == 'y':
-        SConscript('build/samples/f77/SConscript')
-        SConscript('build/samples/f90/SConscript')
+if env['f90_interface'] == 'y':
+    SConscript('build/samples/f77/SConscript')
+    SConscript('build/samples/f90/SConscript')
 
-        # install F90 / F77 samples
-        install(env.RecursiveInstall, '$inst_sampledir/f77',
-                'samples/f77', sampledir_excludes)
-        install(env.RecursiveInstall, '$inst_sampledir/f90',
-                'samples/f90', sampledir_excludes)
+    # install F90 / F77 samples
+    install(env.RecursiveInstall, '$inst_sampledir/f77',
+            'samples/f77', sampledir_excludes)
+    install(env.RecursiveInstall, '$inst_sampledir/f90',
+            'samples/f90', sampledir_excludes)
 
 ### Meta-targets ###
 build_samples = Alias('samples', sampleTargets)

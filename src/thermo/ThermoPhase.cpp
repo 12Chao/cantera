@@ -690,6 +690,359 @@ void ThermoPhase::setState_SPorSV(double Starget, double p,
     }
 }
 
+double ThermoPhase::o2Required(const double* y) const
+{
+    // indices of fuel elements
+    size_t iC = elementIndex("C");
+    size_t iS = elementIndex("S");
+    size_t iH = elementIndex("H");
+
+    double o2req = 0.0;
+    double sum = 0.0;
+    for (size_t k = 0; k != m_kk; ++k) {
+        sum += y[k];
+        double x = y[k] / molecularWeights()[k];
+        if (iC != npos) {
+            o2req += x * nAtoms(k, iC);
+        }
+        if (iS != npos) {
+            o2req += x * nAtoms(k, iS);
+        }
+        if (iH != npos) {
+            o2req += x * 0.25 * nAtoms(k, iH);
+        }
+    }
+    if (sum == 0.0) {
+        throw CanteraError("ThermoPhase::o2Required",
+                           "No composition specified");
+    }
+    return o2req/sum;
+}
+
+double ThermoPhase::o2Present(const double* y) const
+{
+    size_t iO = elementIndex("O");
+    double o2pres = 0.0;
+    double sum = 0.0;
+    for (size_t k = 0; k != m_kk; ++k) {
+        sum += y[k];
+        o2pres += y[k] / molecularWeights()[k] * nAtoms(k, iO);
+    }
+    if (sum == 0.0) {
+        throw CanteraError("ThermoPhase::o2Present",
+                           "No composition specified");
+    }
+    return 0.5 * o2pres / sum;
+}
+
+double ThermoPhase::stoichAirFuelRatio(const compositionMap& fuelComp,
+                                          const compositionMap& oxComp,
+                                          ThermoBasis basis) const
+{
+    vector_fp fuel(getCompositionFromMap(fuelComp));
+    vector_fp ox(getCompositionFromMap(oxComp));
+    return stoichAirFuelRatio(fuel.data(), ox.data(), basis);
+}
+
+double ThermoPhase::stoichAirFuelRatio(const std::string& fuelComp,
+                                          const std::string& oxComp,
+                                          ThermoBasis basis) const
+{
+    return stoichAirFuelRatio(
+            parseCompString(fuelComp.find(":") != std::string::npos ? fuelComp : fuelComp+":1.0"),
+            parseCompString(oxComp.find(":") != std::string::npos ? oxComp : oxComp+":1.0"),
+            basis);
+}
+
+double ThermoPhase::stoichAirFuelRatio(const double* fuelComp,
+                                          const double* oxComp,
+                                          ThermoBasis basis) const
+{
+    vector_fp fuel, ox;
+    if (basis == ThermoBasis::molar) { // convert input compositions to mass fractions
+        fuel.resize(m_kk);
+        ox.resize(m_kk);
+        moleFractionsToMassFractions(fuelComp, fuel.data());
+        moleFractionsToMassFractions(oxComp, ox.data());
+        fuelComp = fuel.data();
+        oxComp = ox.data();
+    }
+
+    double o2_required_fuel = o2Required(fuelComp) - o2Present(fuelComp);
+    double o2_required_ox = o2Required(oxComp) - o2Present(oxComp);
+
+    if (o2_required_fuel < 0.0 || o2_required_ox > 0.0) {
+        throw CanteraError("ThermoPhase::stoichAirFuelRatio",
+                           "Fuel composition contains too much oxygen or "
+                           "oxidizer contains not enough oxygen. "
+                           "Fuel and oxidizer composition mixed up?");
+    }
+
+    if (o2_required_ox == 0.0) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    return o2_required_fuel / (-o2_required_ox);
+}
+
+void ThermoPhase::setEquivalenceRatio(double phi, const double* fuelComp,
+                                      const double* oxComp, ThermoBasis basis)
+{
+    if (phi < 0.0) {
+        throw CanteraError("ThermoPhase::setEquivalenceRatio",
+                           "Equivalence ratio phi must be >= 0");
+    }
+
+    double p = pressure();
+
+    vector_fp fuel, ox;
+    if (basis == ThermoBasis::molar) { // convert input compositions to mass fractions
+        fuel.resize(m_kk);
+        ox.resize(m_kk);
+        moleFractionsToMassFractions(fuelComp, fuel.data());
+        moleFractionsToMassFractions(oxComp, ox.data());
+        fuelComp = fuel.data();
+        oxComp = ox.data();
+    }
+
+    double AFR_st = stoichAirFuelRatio(fuelComp, oxComp, ThermoBasis::mass);
+
+    double sum_f = std::accumulate(fuelComp, fuelComp+m_kk, 0.0);
+    double sum_o = std::accumulate(oxComp, oxComp+m_kk, 0.0);
+
+    vector_fp y(m_kk);
+    for (size_t k = 0; k != m_kk; ++k) {
+        y[k] = phi * fuelComp[k]/sum_f + AFR_st * oxComp[k]/sum_o;
+    }
+
+    setMassFractions(y.data());
+    setPressure(p);
+}
+
+void ThermoPhase::setEquivalenceRatio(double phi, const std::string& fuelComp,
+                                        const std::string& oxComp, ThermoBasis basis)
+{
+    setEquivalenceRatio(phi,
+            parseCompString(fuelComp.find(":") != std::string::npos ? fuelComp : fuelComp+":1.0"),
+            parseCompString(oxComp.find(":") != std::string::npos ? oxComp : oxComp+":1.0"),
+            basis);
+}
+
+void ThermoPhase::setEquivalenceRatio(double phi, const compositionMap& fuelComp,
+                                        const compositionMap& oxComp, ThermoBasis basis)
+{
+    vector_fp fuel = getCompositionFromMap(fuelComp);
+    vector_fp ox = getCompositionFromMap(oxComp);
+    setEquivalenceRatio(phi, fuel.data(), ox.data(), basis);
+}
+
+double ThermoPhase::equivalenceRatio() const
+{
+    double o2_required = o2Required(massFractions());
+    double o2_present  = o2Present(massFractions());
+
+    if (o2_present == 0.0) { // pure fuel
+        return std::numeric_limits<double>::infinity();
+    }
+
+    return o2_required / o2_present;
+}
+
+double ThermoPhase::equivalenceRatio(const compositionMap& fuelComp,
+                                        const compositionMap& oxComp,
+                                        ThermoBasis basis) const
+{
+    vector_fp fuel(getCompositionFromMap(fuelComp));
+    vector_fp ox(getCompositionFromMap(oxComp));
+    return equivalenceRatio(fuel.data(), ox.data(), basis);
+}
+
+double ThermoPhase::equivalenceRatio(const std::string& fuelComp,
+                                        const std::string& oxComp,
+                                        ThermoBasis basis) const
+{
+    return equivalenceRatio(
+        parseCompString(fuelComp.find(":") != std::string::npos ? fuelComp : fuelComp+":1.0"),
+        parseCompString(oxComp.find(":") != std::string::npos ? oxComp : oxComp+":1.0"),
+        basis);
+}
+
+double ThermoPhase::equivalenceRatio(const double* fuelComp,
+                                        const double* oxComp,
+                                        ThermoBasis basis) const
+{
+    double Z = mixtureFraction(fuelComp, oxComp, basis);
+
+    if (Z == 0.0) {
+        return 0.0; // pure oxidizer
+    }
+
+    if (Z == 1.0) {
+        return std::numeric_limits<double>::infinity(); // pure fuel
+    }
+
+    vector_fp fuel, ox;
+    if (basis == ThermoBasis::molar) { // convert input compositions to mass fractions
+        fuel.resize(m_kk);
+        ox.resize(m_kk);
+        moleFractionsToMassFractions(fuelComp, fuel.data());
+        moleFractionsToMassFractions(oxComp, ox.data());
+        fuelComp = fuel.data();
+        oxComp = ox.data();
+    }
+
+    double AFR_st = stoichAirFuelRatio(fuelComp, oxComp, ThermoBasis::mass);
+
+    return std::max(Z / (1.0 - Z) * AFR_st, 0.0);
+}
+
+void ThermoPhase::setMixtureFraction(double mixFrac, const compositionMap& fuelComp,
+                                     const compositionMap& oxComp, ThermoBasis basis)
+{
+    vector_fp fuel(getCompositionFromMap(fuelComp));
+    vector_fp ox(getCompositionFromMap(oxComp));
+    setMixtureFraction(mixFrac, fuel.data(), ox.data(), basis);
+}
+
+void ThermoPhase::setMixtureFraction(double mixFrac, const std::string& fuelComp,
+                                     const std::string& oxComp, ThermoBasis basis)
+{
+    setMixtureFraction(mixFrac,
+        parseCompString(fuelComp.find(":") != std::string::npos ? fuelComp : fuelComp+":1.0"),
+        parseCompString(oxComp.find(":") != std::string::npos ? oxComp : oxComp+":1.0"),
+        basis);
+}
+
+void ThermoPhase::setMixtureFraction(double mixFrac, const double* fuelComp,
+                                       const double* oxComp, ThermoBasis basis)
+{
+    if (mixFrac < 0.0 || mixFrac > 1.0) {
+        throw CanteraError("ThermoPhase::setMixtureFraction",
+                           "Mixture fraction must be between 0 and 1");
+    }
+
+    vector_fp fuel, ox;
+    if (basis == ThermoBasis::molar) { // convert input compositions to mass fractions
+        fuel.resize(m_kk);
+        ox.resize(m_kk);
+        moleFractionsToMassFractions(fuelComp, fuel.data());
+        moleFractionsToMassFractions(oxComp, ox.data());
+        fuelComp = fuel.data();
+        oxComp = ox.data();
+    }
+
+    double sum_yf = std::accumulate(fuelComp, fuelComp+m_kk, 0.0);
+    double sum_yo = std::accumulate(oxComp, oxComp+m_kk, 0.0);
+
+    if (sum_yf == 0.0 || sum_yo == 0.0) {
+        throw CanteraError("ThermoPhase::setMixtureFraction",
+                           "No fuel and/or oxidizer composition specified");
+    }
+
+    double p = pressure();
+
+    vector_fp y(m_kk);
+
+    for (size_t k = 0; k != m_kk; ++k) {
+        y[k] = mixFrac * fuelComp[k]/sum_yf + (1.0-mixFrac) * oxComp[k]/sum_yo;
+    }
+
+    setMassFractions_NoNorm(y.data());
+    setPressure(p);
+}
+
+double ThermoPhase::mixtureFraction(const compositionMap& fuelComp,
+                                       const compositionMap& oxComp,
+                                       ThermoBasis basis,
+                                       const std::string& element) const
+{
+    vector_fp fuel(getCompositionFromMap(fuelComp));
+    vector_fp ox(getCompositionFromMap(oxComp));
+    return mixtureFraction(fuel.data(), ox.data(), basis, element);
+}
+
+double ThermoPhase::mixtureFraction(const std::string& fuelComp,
+                                       const std::string& oxComp,
+                                       ThermoBasis basis,
+                                       const std::string& element) const
+{
+    return mixtureFraction(
+            parseCompString(fuelComp.find(":") != std::string::npos ? fuelComp : fuelComp+":1.0"),
+            parseCompString(oxComp.find(":") != std::string::npos ? oxComp : oxComp+":1.0"),
+            basis, element);
+}
+
+double ThermoPhase::mixtureFraction(const double* fuelComp,
+                                       const double* oxComp,
+                                       ThermoBasis basis,
+                                       const std::string& element) const
+{
+    vector_fp fuel, ox;
+    if (basis == ThermoBasis::molar) { // convert input compositions to mass fractions
+        fuel.resize(m_kk);
+        ox.resize(m_kk);
+        moleFractionsToMassFractions(fuelComp, fuel.data());
+        moleFractionsToMassFractions(oxComp, ox.data());
+        fuelComp = fuel.data();
+        oxComp = ox.data();
+    }
+
+    if (element == "Bilger") // compute the mixture fraction based on the Bilger mixture fraction
+    {
+        double o2_required_fuel = o2Required(fuelComp) - o2Present(fuelComp);
+        double o2_required_ox   = o2Required(oxComp) - o2Present(oxComp);
+        double o2_required_mix  = o2Required(massFractions()) - o2Present(massFractions());
+
+        if (o2_required_fuel < 0.0 || o2_required_ox > 0.0) {
+            throw CanteraError("ThermoPhase::mixtureFraction",
+                               "Fuel composition contains too much oxygen or "
+                               "oxidizer contains not enough oxygen. "
+                               "Fuel and oxidizer composition mixed up?");
+        }
+
+        double denominator = o2_required_fuel - o2_required_ox;
+
+        if (denominator == 0.0) {
+            throw CanteraError("ThermoPhase::mixtureFraction",
+                               "Fuel and oxidizer have the same composition");
+        }
+
+        double Z = (o2_required_mix - o2_required_ox) / denominator;
+
+        return std::min(std::max(Z, 0.0), 1.0);
+    } else {
+        // compute the mixture fraction from a single element
+        double sum_yf = std::accumulate(fuelComp, fuelComp+m_kk, 0.0);
+        double sum_yo = std::accumulate(oxComp, oxComp+m_kk, 0.0);
+
+        if (sum_yf == 0.0 || sum_yo == 0.0) {
+            throw CanteraError("ThermoPhase::mixtureFraction",
+                               "No fuel and/or oxidizer composition specified");
+        }
+
+        auto elementalFraction = [this](size_t m, const double* y) {
+            double Z_m = 0.0;
+            for (size_t k = 0; k != m_kk; ++k) {
+                Z_m += y[k] / molecularWeight(k) * nAtoms(k, m);
+            }
+            return Z_m;
+        };
+
+        size_t m = elementIndex(element);
+        double Z_m_fuel = elementalFraction(m, fuelComp)/sum_yf;
+        double Z_m_ox   = elementalFraction(m, oxComp)/sum_yo;
+        double Z_m_mix  = elementalFraction(m, massFractions());
+
+        if (Z_m_fuel == Z_m_ox) {
+            throw CanteraError("ThermoPhase::mixtureFraction",
+                               "Fuel and oxidizer have the same composition for element {}",
+                               element);
+        }
+        double Z = (Z_m_mix - Z_m_ox) / (Z_m_fuel - Z_m_ox);
+        return std::min(std::max(Z, 0.0), 1.0);
+    }
+}
+
 MultiSpeciesThermo& ThermoPhase::speciesThermo(int k)
 {
     return m_spthermo;

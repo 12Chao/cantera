@@ -178,7 +178,8 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
             }
         }
     }
-       if (!(to_string(err_Plog_reactions).empty())){
+    kin.checkDuplicates();
+    if (!(to_string(err_Plog_reactions).empty())){
             warn_user("Plog::validate",
                 "\n{}", to_string(err_Plog_reactions));
         }

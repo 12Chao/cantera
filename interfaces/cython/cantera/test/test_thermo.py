@@ -17,6 +17,22 @@ class TestThermoPhase(utilities.CanteraTest):
     def test_source(self):
         self.assertEqual(self.phase.source, 'h2o2.xml')
 
+    def test_missing_phases_key(self):
+        yaml = '''
+        species:
+        - name: H
+          composition: {H: 1}
+          thermo:
+            model: NASA7
+            temperature-ranges: [200.0, 1000.0, 6000.0]
+            data:
+            - [2.5, 0.0, 0.0, 0.0, 0.0, 2.547366e+04, -0.44668285]
+            - [2.5, 0.0, 0.0, 0.0, 0.0, 2.547366e+04, -0.44668285]
+            note: L6/94
+        '''
+        with self.assertRaisesRegex(ct.CanteraError, "Key 'phases' not found"):
+            _ = ct.Solution(yaml=yaml)
+
     def test_base_attributes(self):
         self.assertIsInstance(self.phase.name, str)
         self.assertIsInstance(self.phase.phase_of_matter, str)
@@ -286,37 +302,102 @@ class TestThermoPhase(utilities.CanteraTest):
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=ct.Species.listFromFile('gri30.xml') + sulfur_species,
                           reactions=ct.Reaction.listFromFile('gri30.xml'))
-        gas.set_equivalence_ratio(2.0, 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125, CH:0.125')
-        self.assertNear(gas['SO2'].X[0], 31.0/212.0)
-        self.assertNear(gas['O2'].X[0],  31.0/106.0)
-        self.assertNear(gas['SO'].X[0],  11.0/106.0)
-        self.assertNear(gas['CO2'].X[0], 31.0/424.0)
-        self.assertNear(gas['CH3'].X[0], 11.0/53.0)
-        self.assertNear(gas['N2'].X[0],  11.0/212.0)
-        self.assertNear(gas['CH'].X[0],  31.0/424.0)
-        self.assertNear(gas['OH'].X[0],  11.0/212.0)
+        fuel = 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125'
+        ox = 'O2:0.5, SO2:0.25, CO2:0.125, CH:0.125'
 
-    def test_get_equivalence_ratio(self):
+        def test_sulfur_results(gas, fuel, ox, basis):
+            gas.set_equivalence_ratio(2.0, fuel, ox, basis)
+            Z = gas.mixture_fraction(fuel, ox, basis)
+            self.assertNear(gas.stoich_air_fuel_ratio(fuel, ox, basis)/((1.0-Z)/Z),  2.0)
+            gas.set_mixture_fraction(Z, fuel, ox, basis)
+            self.assertNear(gas['SO2'].X[0], 31.0/212.0)
+            self.assertNear(gas['O2'].X[0],  31.0/106.0)
+            self.assertNear(gas['SO'].X[0],  11.0/106.0)
+            self.assertNear(gas['CO2'].X[0], 31.0/424.0)
+            self.assertNear(gas['CH3'].X[0], 11.0/53.0)
+            self.assertNear(gas['N2'].X[0],  11.0/212.0)
+            self.assertNear(gas['CH'].X[0],  31.0/424.0)
+            self.assertNear(gas['OH'].X[0],  11.0/212.0)
+            self.assertNear(gas.equivalence_ratio(fuel, ox, basis),  2.0)
+
+        test_sulfur_results(gas, fuel, ox, 'mole')
+
+        gas.TPX = None, None, fuel
+        fuel = gas.Y
+        gas.TPX = None, None, ox
+        ox = gas.Y
+        test_sulfur_results(gas, fuel, ox, 'mass')
+
+    def test_equivalence_ratio(self):
         gas = ct.Solution('gri30.xml')
         for phi in np.linspace(0.5, 2.0, 5):
             gas.set_equivalence_ratio(phi, 'CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76')
-            self.assertNear(phi, gas.get_equivalence_ratio())
+            self.assertNear(phi, gas.equivalence_ratio('CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76'))
         # Check sulfur species
         sulfur_species = [k for k in ct.Species.listFromFile('nasa_gas.xml') if k.name in ("SO", "SO2")]
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=ct.Species.listFromFile('gri30.xml') + sulfur_species)
         for phi in np.linspace(0.5, 2.0, 5):
             gas.set_equivalence_ratio(phi, 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125')
-            self.assertNear(phi, gas.get_equivalence_ratio())
-        gas.X = 'CH4:1, N2:1, CO2:1, H2O:1'
-        self.assertEqual(gas.get_equivalence_ratio(), np.inf)
-        # Check behavior with oxidizers besides O2, and check optional oxidizer arguments
-        gas.set_equivalence_ratio(0.5, 'CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76, NO:0.1')
-        self.assertNear(0.5, gas.get_equivalence_ratio())
-        gas.X = 'CH4:1, O2:2, NO:0.1'
-        self.assertNear(1.0, gas.get_equivalence_ratio(ignore=['NO']))
-        self.assertNear(0.975, gas.get_equivalence_ratio(oxidizers=['O2']))
-        self.assertNear(gas.get_equivalence_ratio(), gas.get_equivalence_ratio(oxidizers=['O2', 'NO']))
+            self.assertNear(phi, gas.equivalence_ratio('CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125'))
+        gas.X = 'CH4:1' # pure fuel
+        self.assertEqual(gas.equivalence_ratio(), np.inf)
+
+    def test_get_set_equivalence_ratio_functions(self):
+        fuel = "CH4:0.2,O2:0.02,N2:0.1,CO:0.05,CO2:0.02"
+        ox = "O2:0.21,N2:0.79,CO:0.04,CH4:0.01,CO2:0.03"
+
+        gas = ct.Solution('gri30.xml')
+        gas.TPX = 300, 1e5, fuel
+        Y_Cf = gas.elemental_mass_fraction("C")
+        Y_Of = gas.elemental_mass_fraction("O")
+        gas.TPX = 300, 1e5, ox
+        Y_Co = gas.elemental_mass_fraction("C")
+        Y_Oo = gas.elemental_mass_fraction("O")
+
+        def test_equil_results(gas, fuel, ox, Y_Cf, Y_Of, Y_Co, Y_Oo, basis):
+            gas.TP = 300, 1e5
+            gas.set_equivalence_ratio(1.3, fuel, ox, basis)
+            T = gas.T
+
+            # set mixture to burnt state to make sure that equivalence ratio and
+            # mixture fraction are independent of reaction progress
+            gas.equilibrate("HP");
+
+            phi = gas.equivalence_ratio(fuel, ox, basis)
+            phi_loc = gas.equivalence_ratio()
+            mf = gas.mixture_fraction(fuel, ox, basis)
+            mf_C = gas.mixture_fraction(fuel, ox, basis, element="C")
+            mf_O = gas.mixture_fraction(fuel, ox, basis, element="O")
+            l = gas.stoich_air_fuel_ratio(fuel, ox, basis)
+
+            gas.set_mixture_fraction(mf, fuel,ox, basis)
+            phi2 = gas.equivalence_ratio(fuel, ox, basis)
+
+            self.assertNear(phi, 1.3)
+            self.assertNear(phi2, 1.3)
+            self.assertNear(phi_loc, 1.1726068608195617)
+            self.assertNear(mf, 0.13415725911057605)
+            self.assertNear(mf_C, (gas.elemental_mass_fraction("C")-Y_Co)/(Y_Cf-Y_Co))
+            self.assertNear(mf_O, (gas.elemental_mass_fraction("O")-Y_Oo)/(Y_Of-Y_Oo))
+            self.assertNear(l, 8.3901204498353561)
+            self.assertNear(gas.P, 1e5)
+            self.assertNear(T, 300.0)
+
+        test_equil_results(gas, fuel, ox, Y_Cf, Y_Of, Y_Co, Y_Oo, 'mole')
+
+        # do the same for mass-based functions
+
+        gas.TPX = None, None, fuel
+        fuel = gas.Y
+        Y_Cf = gas.elemental_mass_fraction("C")
+        Y_Of = gas.elemental_mass_fraction("O")
+        gas.TPX = None, None, ox
+        ox = gas.Y
+        Y_Co = gas.elemental_mass_fraction("C")
+        Y_Oo = gas.elemental_mass_fraction("O")
+
+        test_equil_results(gas, fuel, ox, Y_Cf, Y_Of, Y_Co, Y_Oo, 'mass')
 
     def test_full_report(self):
         report = self.phase.report(threshold=0.0)
