@@ -5,7 +5,9 @@
 
 #include "cantera/kinetics/RxnRates.h"
 #include "cantera/base/Array.h"
+#include "cantera/kinetics/KineticsFactory.h"
 
+using std::string;
 namespace Cantera
 {
 Arrhenius::Arrhenius()
@@ -90,8 +92,9 @@ Plog::Plog(const std::multimap<double, Arrhenius>& rates)
 
 void Plog::validate(const std::string& equation)
 {
-    std::vector<std::string> error_reactions;
-    std::vector<double> pressures;
+    // std::vector<std::string> error_reactions;
+    // std::vector<double> pressures;
+    // fmt::memory_buffer err_reactions;
     double T[] = {200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0};
 
     for (auto iter = pressures_.begin(); iter->first < 1000; iter++) {
@@ -103,20 +106,16 @@ void Plog::validate(const std::string& equation)
                 // message will correctly indicate that the problematic rate
                 // expression is at the higher of the adjacent pressures.
                  // expression is at the higher of the adjacent pressures.
-                std::string err_PLOG = fmt::format("\nInvalid rate coefficient for reaction '{}'\nat P = {} , T = {}",
+                format_to(err_Plog_reactions, "\nInvalid rate coefficient for reaction '{}'\nat P = {} , T = {}",
                     equation, std::exp((iter)->first), T[i]);
-                error_reactions.push_back(err_PLOG);
              }
          }
      }
-    if (!error_reactions.empty()){
-        std::string PLOG_errors;
-        for (size_t i=0; i < error_reactions.size(); i++){
-            PLOG_errors += error_reactions.at(i);
-        }
-        warn_user("Plog::validate",
-            "\n{}\n", PLOG_errors);
-    }
+    // if (!(to_string(err_reactions).empty())){
+    //     warn_user("Plog::validate",
+    //         "\n{}", to_string(err_reactions));
+    // }
+    return;
 }
 
 std::vector<std::pair<double, Arrhenius> > Plog::rates() const

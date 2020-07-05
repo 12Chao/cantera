@@ -11,6 +11,7 @@
 #include "cantera/kinetics/EdgeKinetics.h"
 #include "cantera/kinetics/importKinetics.h"
 #include "cantera/base/xml.h"
+#include "cantera/base/global.h"
 
 using namespace std;
 
@@ -177,6 +178,10 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
             }
         }
     }
+       if (!(to_string(err_Plog_reactions).empty())){
+            warn_user("Plog::validate",
+                "\n{}", to_string(err_Plog_reactions));
+        }
 }
 
 }
