@@ -180,8 +180,8 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
     }
     kin.checkDuplicates();
     if (!(to_string(err_Plog_reactions).empty())){
-            warn_user("Plog::validate",
-                "\n{}", to_string(err_Plog_reactions));
+            throw CanteraError("Plog::validate",
+                            "\n{}", to_string(err_Plog_reactions));
         }
 }
 
