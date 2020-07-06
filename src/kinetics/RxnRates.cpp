@@ -94,7 +94,7 @@ void Plog::validate(const std::string& equation)
 {
     // std::vector<std::string> error_reactions;
     // std::vector<double> pressures;
-    // fmt::memory_buffer err_reactions;
+    fmt::memory_buffer err_reactions;
     double T[] = {200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0};
 
     for (auto iter = pressures_.begin(); iter->first < 1000; iter++) {
@@ -106,16 +106,19 @@ void Plog::validate(const std::string& equation)
                 // message will correctly indicate that the problematic rate
                 // expression is at the higher of the adjacent pressures.
                  // expression is at the higher of the adjacent pressures.
-                format_to(err_Plog_reactions, "\nInvalid rate coefficient for reaction '{}'\nat P = {} , T = {}",
+                format_to(err_reactions, "\nInvalid rate coefficient for reaction '{}'\nat P = {} , T = {}",
                     equation, std::exp((iter)->first), T[i]);
+                // throw CanteraError("Plog::validate",
+                //     "Invalid rate coefficient for reaction '{}'\nat P = {}, T = {}",
+                //     equation, std::exp((iter)->first), T[i]);
              }
          }
      }
-    // if (!(to_string(err_reactions).empty())){
-    //     warn_user("Plog::validate",
-    //         "\n{}", to_string(err_reactions));
-    // }
-    return;
+    if (!(to_string(err_reactions).empty())){
+        throw CanteraError("Plog::validate",
+                        "\n{}", to_string(err_reactions));
+    }
+    // return;
 }
 
 std::vector<std::pair<double, Arrhenius> > Plog::rates() const

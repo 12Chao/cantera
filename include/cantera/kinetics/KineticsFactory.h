@@ -141,7 +141,6 @@ unique_ptr<Kinetics> newKinetics(std::vector<ThermoPhase*>& phases,
 void addReactions(Kinetics& kin, const AnyMap& phaseNode,
                   const AnyMap& rootNode=AnyMap());
 
-fmt::memory_buffer err_Plog_reactions;
 }
 
 #endif

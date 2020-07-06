@@ -95,6 +95,7 @@ unique_ptr<Kinetics> newKinetics(std::vector<ThermoPhase*>& phases,
 
 void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode)
 {
+    fmt::memory_buffer err_Plog_reactions;
     kin.skipUndeclaredThirdBodies(
         phaseNode.getBool("skip-undeclared-third-bodies", false));
 
@@ -169,20 +170,30 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
             AnyMap reactions = AnyMap::fromYamlFile(fileName,
                 rootNode.getString("__file__", ""));
             for (const auto& R : reactions[node].asVector<AnyMap>()) {
-                kin.addReaction(newReaction(R, kin));
+                try{
+                    kin.addReaction(newReaction(R, kin));
+                }
+                catch(CanteraError& err){
+                    format_to(err_Plog_reactions, "{}", err.what());
+                }
             }
         } else {
             // specified section is in the current file
             for (const auto& R : rootNode.at(sections[i]).asVector<AnyMap>()) {
-                kin.addReaction(newReaction(R, kin));
+                try {
+                    kin.addReaction(newReaction(R, kin));
+                }
+                catch (CanteraError& err){
+                    format_to(err_Plog_reactions, "{}", err.what());
+                }
             }
         }
     }
     kin.checkDuplicates();
     if (!(to_string(err_Plog_reactions).empty())){
-            throw CanteraError("Plog::validate",
-                            "\n{}", to_string(err_Plog_reactions));
-        }
+        throw CanteraError("Plog::validate",
+                        "\n{}", to_string(err_Plog_reactions));
+    }
 }
 
 }
