@@ -11,7 +11,8 @@
 #include "cantera/kinetics/EdgeKinetics.h"
 #include "cantera/kinetics/importKinetics.h"
 #include "cantera/base/xml.h"
-#include "cantera/base/global.h"
+#include <regex>
+
 
 using namespace std;
 
@@ -184,15 +185,34 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
                     kin.addReaction(newReaction(R, kin));
                 }
                 catch (CanteraError& err){
-                    format_to(err_Plog_reactions, "{}", err.what());
+                    std::string captured_err = err.what();
+                    captured_err.erase(std::remove(captured_err.begin(), captured_err.end(), '*'), captured_err.end());
+                    if (captured_err.find("Plog::validate") != std::string::npos) {
+                        captured_err.erase(0, 40);
+                        format_to(err_Plog_reactions, "{}", captured_err);
+                    } else {
+                        std::regex re("(\\w+)::(\\w+)");
+                        std::smatch match;
+                        regex_search(captured_err, match, re);
+                        std::string procedure = match[0];
+                        std::string msg = captured_err.substr(25+procedure.length(), -1);
+                        throw CanteraError(procedure,
+                            "{}", msg);
+                    }
                 }
             }
         }
     }
     kin.checkDuplicates();
     if (!(to_string(err_Plog_reactions).empty())){
+        std::string Plog_err = to_string(err_Plog_reactions);
+        // std::string to_erase = "Plog::validate:";
+        // size_t pos = std::string::npos;
+        // while((pos  = Plog_err.find(to_erase) )!= std::string::npos){
+        //     Plog_err.erase(pos, to_erase.length());
+        // } 
         throw CanteraError("Plog::validate",
-                        "\n{}", to_string(err_Plog_reactions));
+                        "\n{}", Plog_err);
     }
 }
 
