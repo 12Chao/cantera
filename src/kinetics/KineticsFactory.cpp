@@ -206,11 +206,6 @@ void addReactions(Kinetics& kin, const AnyMap& phaseNode, const AnyMap& rootNode
     kin.checkDuplicates();
     if (!(to_string(err_Plog_reactions).empty())){
         std::string Plog_err = to_string(err_Plog_reactions);
-        // std::string to_erase = "Plog::validate:";
-        // size_t pos = std::string::npos;
-        // while((pos  = Plog_err.find(to_erase) )!= std::string::npos){
-        //     Plog_err.erase(pos, to_erase.length());
-        // } 
         throw CanteraError("Plog::validate",
                         "\n{}", Plog_err);
     }

@@ -92,8 +92,6 @@ Plog::Plog(const std::multimap<double, Arrhenius>& rates)
 
 void Plog::validate(const std::string& equation)
 {
-    // std::vector<std::string> error_reactions;
-    // std::vector<double> pressures;
     fmt::memory_buffer err_reactions;
     double T[] = {200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0};
 
@@ -108,9 +106,6 @@ void Plog::validate(const std::string& equation)
                  // expression is at the higher of the adjacent pressures.
                 format_to(err_reactions, "\nInvalid rate coefficient for reaction '{}'\nat P = {} , T = {}",
                     equation, std::exp((iter)->first), T[i]);
-                // throw CanteraError("Plog::validate",
-                //     "Invalid rate coefficient for reaction '{}'\nat P = {}, T = {}",
-                //     equation, std::exp((iter)->first), T[i]);
              }
          }
      }
@@ -118,7 +113,6 @@ void Plog::validate(const std::string& equation)
         throw CanteraError("Plog::validate",
                         "\n{}", to_string(err_reactions));
     }
-    // return;
 }
 
 std::vector<std::pair<double, Arrhenius> > Plog::rates() const
