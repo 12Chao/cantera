@@ -2,6 +2,9 @@ import os
 from os.path import join as pjoin
 import itertools
 from pathlib import Path
+import logging
+import io
+import sys
 
 from . import utilities
 import cantera as ct
@@ -35,10 +38,11 @@ class converterTestCommon:
         self._convert(inputFile, thermo=thermo, transport=transport,
             surface=surface, output=output, extra=extra,
             quiet=quiet, permissive=permissive)
+        return output
 
     def checkConversion(self, refFile, testFile):
         ref = ct.Solution(refFile)
-        gas = ct.Solution(testFile + self.ext)
+        gas = ct.Solution(testFile)
 
         self.assertEqual(ref.element_names, gas.element_names)
         self.assertEqual(ref.species_names, gas.species_names)
@@ -85,30 +89,35 @@ class converterTestCommon:
                 self.assertNear(ref_kr[i], gas_kr[i], rtol=tol, msg='kr' + message)
 
     def test_gri30(self):
-        self.convert('gri30.inp', thermo='gri30_thermo.dat',
-                     transport='gri30_tran.dat', output='gri30_test')
+        output = self.convert('gri30.inp', thermo='gri30_thermo.dat',
+                              transport='gri30_tran.dat', output='gri30_test')
 
-        ref, gas = self.checkConversion('gri30.xml', 'gri30_test')
+        ref, gas = self.checkConversion('gri30.xml', output)
         self.checkKinetics(ref, gas, [300, 1500], [5e3, 1e5, 2e6])
 
     def test_soot(self):
-        self.convert('soot.inp', thermo='soot-therm.dat', output='soot_test')
-        ref, gas = self.checkConversion('soot.xml', 'soot_test')
+        output = self.convert('soot.inp', thermo='soot-therm.dat', output='soot_test')
+        ref, gas = self.checkConversion('soot.xml', output)
         self.checkThermo(ref, gas, [300, 1100])
         self.checkKinetics(ref, gas, [300, 1100], [5e3, 1e5, 2e6])
 
     def test_pdep(self):
-        self.convert('pdep-test.inp')
-        ref, gas = self.checkConversion(pjoin(self.test_data_dir, 'pdep-test.xml'),
-                                        pjoin(self.test_work_dir, 'pdep-test'))
+        output = self.convert('pdep-test.inp')
+        ref, gas = self.checkConversion('pdep-test.xml', output)
         # Chebyshev coefficients in XML are truncated to 6 digits, limiting accuracy
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6],
                            tol=2e-4)
 
     def test_species_only(self):
         self.convert(None, thermo='dummy-thermo.dat', output='dummy-thermo')
-        cti = "ideal_gas(elements='C H', species='dummy-thermo:R1A R1B P1')"
-        gas = ct.Solution(source=cti)
+        if self.ext == ".cti":
+            cti = "ideal_gas(elements='C H', species='dummy-thermo:R1A R1B P1')"
+            gas = ct.Solution(source=cti)
+        elif self.ext == ".yaml":
+            yaml = ("{phases: [{name: gas, species: "
+                    "[{dummy-thermo.yaml/species: [R1A, R1B, P1]}], "
+                    "thermo: ideal-gas}]}")
+            gas = ct.Solution(yaml=yaml)
         self.assertEqual(gas.n_species, 3)
         self.assertEqual(gas.n_reactions, 0)
 
@@ -120,9 +129,9 @@ class converterTestCommon:
         with self.assertRaisesRegex(self.InputError, 'additional thermo'):
             self.convert('duplicate-thermo.inp')
 
-        self.convert('duplicate-thermo.inp', permissive=True)
+        output = self.convert('duplicate-thermo.inp', permissive=True)
 
-        gas = ct.Solution('duplicate-thermo' + self.ext)
+        gas = ct.Solution(output)
         self.assertEqual(gas.n_species, 3)
         self.assertEqual(gas.n_reactions, 2)
 
@@ -130,14 +139,14 @@ class converterTestCommon:
         with self.assertRaisesRegex(self.InputError, 'additional declaration'):
             self.convert('duplicate-species.inp')
 
-        self.convert('duplicate-species.inp', permissive=True)
+        output = self.convert('duplicate-species.inp', permissive=True)
 
-        gas = ct.Solution('duplicate-species' + self.ext)
+        gas = ct.Solution(output)
         self.assertEqual(gas.species_names, ['foo','bar','baz'])
 
     def test_pathologicalSpeciesNames(self):
-        self.convert('species-names.inp')
-        gas = ct.Solution('species-names' + self.ext)
+        output = self.convert('species-names.inp')
+        gas = ct.Solution(output)
 
         self.assertEqual(gas.n_species, 9)
         self.assertEqual(gas.species_name(0), '(Parens)')
@@ -169,8 +178,8 @@ class converterTestCommon:
         with self.assertRaisesRegex(self.InputError, 'implicitly ended'):
             self.convert('unterminated-sections.inp')
 
-        self.convert('unterminated-sections.inp', permissive=True)
-        gas = ct.Solution('unterminated-sections' + self.ext)
+        output = self.convert('unterminated-sections.inp', permissive=True)
+        gas = ct.Solution(output)
         self.assertEqual(gas.n_species, 3)
         self.assertEqual(gas.n_reactions, 2)
 
@@ -178,8 +187,8 @@ class converterTestCommon:
         with self.assertRaisesRegex(self.InputError, 'implicitly ended'):
             self.convert('unterminated-sections2.inp')
 
-        self.convert('unterminated-sections2.inp', permissive=True)
-        gas = ct.Solution('unterminated-sections2' + self.ext)
+        output = self.convert('unterminated-sections2.inp', permissive=True)
+        gas = ct.Solution(output)
         self.assertEqual(gas.n_species, 3)
         self.assertEqual(gas.n_reactions, 2)
 
@@ -189,39 +198,36 @@ class converterTestCommon:
                          permissive=True)
 
     def test_nasa9(self):
-        self.convert('nasa9-test.inp',thermo='nasa9-test-therm.dat')
-        ref, gas = self.checkConversion('nasa9-test.xml', 'nasa9-test')
+        output = self.convert('nasa9-test.inp', thermo='nasa9-test-therm.dat')
+        ref, gas = self.checkConversion('nasa9-test.xml', output)
         self.checkThermo(ref, gas, [300, 500, 1200, 5000])
 
     def test_nasa9_subset(self):
-        self.convert('nasa9-test-subset.inp', thermo='nasa9-test-therm.dat')
-        ref, gas = self.checkConversion('nasa9-test-subset.xml',
-                                        'nasa9-test-subset')
+        output = self.convert('nasa9-test-subset.inp', thermo='nasa9-test-therm.dat')
+        ref, gas = self.checkConversion('nasa9-test-subset.xml', output)
         self.checkThermo(ref, gas, [300, 500, 1200, 5000])
 
     def test_sri_falloff(self):
-        self.convert('sri-falloff.inp', thermo='dummy-thermo.dat')
-        ref, gas = self.checkConversion('sri-falloff.xml', 'sri-falloff')
+        output = self.convert('sri-falloff.inp', thermo='dummy-thermo.dat')
+        ref, gas = self.checkConversion('sri-falloff.xml', output)
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6])
 
     def test_chemically_activated(self):
-        self.convert('chemically-activated-reaction.inp')
+        output = self.convert('chemically-activated-reaction.inp')
         ref, gas = self.checkConversion('chemically-activated-reaction.xml',
-                                        'chemically-activated-reaction')
+                                        output)
         # pre-exponential factor in XML is truncated to 7 sig figs, limiting accuracy
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6, 1e7],
                            tol=1e-7)
 
     def test_explicit_third_bodies(self):
-        self.convert('explicit-third-bodies.inp', thermo='dummy-thermo.dat')
-        ref, gas = self.checkConversion('explicit-third-bodies.xml',
-                                        'explicit-third-bodies')
+        output = self.convert('explicit-third-bodies.inp', thermo='dummy-thermo.dat')
+        ref, gas = self.checkConversion('explicit-third-bodies.xml', output)
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6])
 
     def test_explicit_reverse_rate(self):
-        self.convert('explicit-reverse-rate.inp', thermo='dummy-thermo.dat')
-        ref, gas = self.checkConversion('explicit-reverse-rate.xml',
-                                        'explicit-reverse-rate')
+        output = self.convert('explicit-reverse-rate.inp', thermo='dummy-thermo.dat')
+        ref, gas = self.checkConversion('explicit-reverse-rate.xml', output)
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6])
 
         # Reactions with explicit reverse rate constants are transformed into
@@ -243,9 +249,8 @@ class converterTestCommon:
         self.assertEqual(gas.n_reactions, 5)
 
     def test_explicit_forward_order(self):
-        self.convert('explicit-forward-order.inp', thermo='dummy-thermo.dat')
-        ref, gas = self.checkConversion('explicit-forward-order.xml',
-                                        'explicit-forward-order')
+        output = self.convert('explicit-forward-order.inp', thermo='dummy-thermo.dat')
+        ref, gas = self.checkConversion('explicit-forward-order.xml', output)
         # pre-exponential factor in XML is truncated to 7 sig figs, limiting accuracy
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6],
                            tol=2e-7)
@@ -255,13 +260,20 @@ class converterTestCommon:
             self.convert('negative-order.inp', thermo='dummy-thermo.dat')
 
     def test_negative_order_permissive(self):
-        self.convert('negative-order.inp', thermo='dummy-thermo.dat',
-            permissive=True)
-        ref, gas = self.checkConversion('explicit-forward-order.xml',
-                                        'explicit-forward-order')
+        output = self.convert('negative-order.inp', thermo='dummy-thermo.dat',
+                              permissive=True)
+        ref, gas = self.checkConversion('negative-order.cti', output)
         # pre-exponential factor in XML is truncated to 7 sig figs, limiting accuracy
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6],
                            tol=2e-7)
+
+    def test_negative_A_factor(self):
+        output = self.convert('negative-rate.inp', thermo='dummy-thermo.dat')
+        gas = ct.Solution(output)  # Validate the mechanism
+        self.assertLess(gas.reaction(4).rate.pre_exponential_factor, 0)
+        self.assertLess(gas.reaction(1).rate.pre_exponential_factor, 0)
+        self.assertLess(gas.reaction(2).rate.pre_exponential_factor, 0)
+        self.assertLess(gas.forward_rate_constants[5], 0)
 
     def test_bad_troe_value(self):
         with self.assertRaises(ValueError):
@@ -272,16 +284,15 @@ class converterTestCommon:
             self.convert('invalid-equation.inp', thermo='dummy-thermo.dat')
 
     def test_reaction_units(self):
-        self.convert('units-default.inp', thermo='dummy-thermo.dat')
-        self.convert('units-custom.inp', thermo='dummy-thermo.dat')
-        default, custom = self.checkConversion('units-default' + self.ext,
-                                               'units-custom')
+        out_def = self.convert('units-default.inp', thermo='dummy-thermo.dat')
+        out_cus = self.convert('units-custom.inp', thermo='dummy-thermo.dat')
+        default, custom = self.checkConversion(out_def, out_cus)
         self.checkKinetics(default, custom,
                            [300, 800, 1450, 2800], [5e0, 5e3, 1e5, 2e6, 1e8], 1e-7)
 
     def test_float_stoich_coeffs(self):
-        self.convert('float-stoich.inp', thermo='dummy-thermo.dat')
-        gas = ct.Solution('float-stoich' + self.ext)
+        output = self.convert('float-stoich.inp', thermo='dummy-thermo.dat')
+        gas = ct.Solution(output)
 
         R = gas.reactant_stoich_coeffs()
         P = gas.product_stoich_coeffs()
@@ -291,23 +302,23 @@ class converterTestCommon:
         self.assertArrayNear(P[:,1], [0, 0.33, 1.67, 0])
 
     def test_photon(self):
-        self.convert('photo-reaction.inp', thermo='dummy-thermo.dat',
-                     permissive=True)
+        output = self.convert('photo-reaction.inp', thermo='dummy-thermo.dat',
+                              permissive=True)
 
-        ref, gas = self.checkConversion('photo-reaction.xml', 'photo-reaction')
+        ref, gas = self.checkConversion('photo-reaction.xml', output)
         self.checkKinetics(ref, gas, [300, 800, 1450, 2800], [5e3, 1e5, 2e6])
 
     def test_transport_normal(self):
-        self.convert('h2o2.inp', transport='gri30_tran.dat',
-            output='h2o2_transport_normal')
+        output = self.convert('h2o2.inp', transport='gri30_tran.dat',
+                              output='h2o2_transport_normal')
 
-        gas = ct.Solution('h2o2_transport_normal' + self.ext)
+        gas = ct.Solution(output)
         gas.TPX = 300, 101325, 'H2:1.0, O2:1.0'
         self.assertAlmostEqual(gas.thermal_conductivity, 0.07663, 4)
 
     def test_transport_embedded(self):
-        self.convert('with-transport.inp')
-        gas = ct.Solution('with-transport' + self.ext)
+        output = self.convert('with-transport.inp')
+        gas = ct.Solution(output)
         gas.X = [0.2, 0.3, 0.5]
         D = gas.mix_diff_coeffs
         for d in D:
@@ -347,29 +358,27 @@ class converterTestCommon:
                 output='h2o2_transport_float_geometry')
 
     def test_empty_reaction_section(self):
-        self.convert('h2o2_emptyReactions.inp')
-        gas = ct.Solution('h2o2_emptyReactions.cti')
+        output = self.convert('h2o2_emptyReactions.inp')
+        gas = ct.Solution(output)
         self.assertEqual(gas.n_species, 9)
         self.assertEqual(gas.n_reactions, 0)
 
     def test_reaction_comments1(self):
-        self.convert('pdep-test.inp')
-        with open(pjoin(self.test_work_dir, 'pdep-test' + self.ext)) as f:
-            text = f.read()
+        output = self.convert('pdep-test.inp')
+        text = Path(output).read_text()
         self.assertIn('Generic mechanism header', text)
         self.assertIn('Single PLOG reaction', text)
         self.assertIn('Multiple PLOG expressions at the same pressure', text)
 
     def test_reaction_comments2(self):
-        self.convert('explicit-third-bodies.inp', thermo='dummy-thermo.dat')
-        with open(pjoin(self.test_work_dir, 'explicit-third-bodies' + self.ext)) as f:
-            text = f.read()
+        output = self.convert('explicit-third-bodies.inp', thermo='dummy-thermo.dat')
+        text = Path(output).read_text()
         self.assertIn('An end of line comment', text)
         self.assertIn('A comment after the last reaction', text)
 
     def test_custom_element(self):
-        self.convert('custom-elements.inp')
-        gas = ct.Solution('custom-elements' + self.ext)
+        output = self.convert('custom-elements.inp')
+        gas = ct.Solution(output)
         self.assertEqual(gas.n_elements, 4)
         self.assertNear(gas.atomic_weight(2), 13.003)
         self.assertEqual(gas.n_atoms('ethane', 'C'), 2)
@@ -377,11 +386,11 @@ class converterTestCommon:
         self.assertEqual(gas.n_atoms('CC', 'Ci'), 1)
 
     def test_surface_mech(self):
-        self.convert('surface1-gas.inp', surface='surface1.inp',
-                     output='surface1')
+        output = self.convert('surface1-gas.inp', surface='surface1.inp',
+                              output='surface1')
 
-        gas = ct.Solution('surface1' + self.ext, 'gas')
-        surf = ct.Interface('surface1' + self.ext, 'PT_SURFACE', [gas])
+        gas = ct.Solution(output, 'gas')
+        surf = ct.Interface(output, 'PT_SURFACE', [gas])
 
         self.assertEqual(gas.n_reactions, 11)
         self.assertEqual(surf.n_reactions, 15)
@@ -410,14 +419,24 @@ class converterTestCommon:
         self.assertNear(covdeps['H_Pt'][2], -6e6) # 6000 J/gmol = 6e6 J/kmol
 
     def test_surface_mech2(self):
-        self.convert('surface1-gas-noreac.inp', surface='surface1.inp',
-                     output='surface1-nogasreac')
+        output = self.convert('surface1-gas-noreac.inp', surface='surface1.inp',
+                              output='surface1-nogasreac')
 
-        gas = ct.Solution('surface1-nogasreac' + self.ext, 'gas')
-        surf = ct.Interface('surface1-nogasreac' + self.ext, 'PT_SURFACE', [gas])
+        gas = ct.Solution(output, 'gas')
+        surf = ct.Interface(output, 'PT_SURFACE', [gas])
 
         self.assertEqual(gas.n_reactions, 0)
         self.assertEqual(surf.n_reactions, 15)
+
+    def test_third_body_plus_falloff_reactions(self):
+        self.convert('third_body_plus_falloff_reaction.inp')
+        gas = ct.Solution('third_body_plus_falloff_reaction' + self.ext)
+        self.assertEqual(gas.n_reactions, 2)
+
+    def test_blank_line_in_header(self):
+        self.convert('blank_line_in_header.inp')
+        gas = ct.Solution('blank_line_in_header' + self.ext)
+        self.assertEqual(gas.n_reactions, 1)
 
 
 class ck2ctiTest(converterTestCommon, utilities.CanteraTest):
@@ -458,6 +477,36 @@ class ck2yamlTest(converterTestCommon, utilities.CanteraTest):
         self.assertEqual(desc, 'This is an alternative description.')
         for key in ['foo', 'bar']:
             self.assertIn(key, yml.keys())
+
+    def test_duplicate_reactions(self):
+        # Running a test this way instead of using the convertMech function
+        # tests the behavior of the ck2yaml.main function and the mechanism
+        # validation step.
+
+        # clear global handler created by logging.basicConfig() in ck2cti
+        logging.getLogger().handlers.clear()
+
+        # Replace the ck2yaml logger with our own in order to capture the output
+        log_stream = io.StringIO()
+        logger = logging.getLogger('cantera.ck2yaml')
+        original_handler = logger.handlers.pop()
+        logformatter = logging.Formatter('%(message)s')
+        handler = logging.StreamHandler(log_stream)
+        handler.setFormatter(logformatter)
+        logger.addHandler(handler)
+
+        with self.assertRaises(SystemExit):
+            ck2yaml.main([
+                '--input={}/undeclared-duplicate-reactions.inp'.format(self.test_data_dir),
+                '--thermo={}/dummy-thermo.dat'.format(self.test_data_dir)])
+
+        # Put the original logger back in place
+        logger.handlers.clear()
+        logger.addHandler(original_handler)
+
+        message = log_stream.getvalue()
+        for token in ('FAILED', 'lines 12 and 14', 'R1A', 'R1B'):
+            self.assertIn(token, message)
 
 
 class CtmlConverterTest(utilities.CanteraTest):
@@ -668,13 +717,17 @@ class cti2yamlTest(utilities.CanteraTest):
         self.checkKinetics(cti_tpb, yaml_tpb, [900, 1000, 1100], [1e5])
 
     def test_liquidvapor(self):
+        output_file = Path(self.test_work_dir).joinpath('liquidvapor.yaml')
         cti2yaml.convert(Path(self.cantera_data).joinpath('liquidvapor.cti'),
-                         Path(self.test_work_dir).joinpath('liquidvapor.yaml'))
+                         output_file)
         for name in ['water', 'nitrogen', 'methane', 'hydrogen', 'oxygen',
                      'hfc134a', 'carbondioxide', 'heptane']:
             ctiPhase, yamlPhase = self.checkConversion('liquidvapor', name=name)
             self.checkThermo(ctiPhase, yamlPhase,
                              [1.3 * ctiPhase.min_temp, 0.7 * ctiPhase.max_temp])
+        # The output file must be removed after this test because it shadows
+        # a file distributed with Cantera that is used in other tests.
+        output_file.unlink()
 
     def test_Redlich_Kwong_CO2(self):
         cti2yaml.convert(Path(self.test_data_dir).joinpath('co2_RK_example.cti'),
@@ -894,15 +947,18 @@ class ctml2yamlTest(utilities.CanteraTest):
         self.checkKinetics(ctml_tpb, yaml_tpb, [900, 1000, 1100], [1e5])
 
     def test_liquidvapor(self):
+        output_file = Path(self.test_work_dir).joinpath('liquidvapor.yaml')
         ctml2yaml.convert(
-            Path(self.cantera_data).joinpath('liquidvapor.xml'),
-            Path(self.test_work_dir).joinpath('liquidvapor.yaml'),
+            Path(self.cantera_data).joinpath('liquidvapor.xml'), output_file,
         )
         for name in ['water', 'nitrogen', 'methane', 'hydrogen', 'oxygen',
                      'hfc134a', 'carbondioxide', 'heptane']:
             ctmlPhase, yamlPhase = self.checkConversion('liquidvapor', name=name)
             self.checkThermo(ctmlPhase, yamlPhase,
                              [1.3 * ctmlPhase.min_temp, 0.7 * ctmlPhase.max_temp])
+        # The output file must be removed after this test because it shadows
+        # a file distributed with Cantera that is used in other tests.
+        output_file.unlink()
 
     def test_Redlich_Kwong_CO2(self):
         ctml2yaml.convert(
@@ -1047,13 +1103,16 @@ class ctml2yamlTest(utilities.CanteraTest):
         self.checkThermo(ctmlGas, yamlGas, [300, 500, 1300, 2000])
         self.checkKinetics(ctmlGas, yamlGas, [900, 1800], [2e5, 20e5])
 
+    # @todo Remove after Cantera 2.5 - class FixedChemPotSSTP is deprecated
     def test_fixed_chemical_potential_thermo(self):
+        ct.suppress_deprecation_warnings()
         ctml2yaml.convert(
             Path(self.test_data_dir).joinpath("LiFixed.xml"),
             Path(self.test_work_dir).joinpath("LiFixed.yaml"),
         )
         ctmlGas, yamlGas = self.checkConversion("LiFixed")
         self.checkThermo(ctmlGas, yamlGas, [300, 500, 1300, 2000])
+        ct.make_deprecation_warnings_fatal()
 
     def test_water_IAPWS95_thermo(self):
         ctml2yaml.convert(
@@ -1180,7 +1239,9 @@ class ctml2yamlTest(utilities.CanteraTest):
             Path(self.test_data_dir).joinpath("pdss_hkft.xml"),
             Path(self.test_work_dir).joinpath("pdss_hkft.yaml"),
         )
-
+        # @todo Remove "gas" mode test after Cantera 2.5 - "gas" mode of class
+        #     IdealSolnGasVPSS is deprecated
+        ct.suppress_deprecation_warnings()
         for name in ["vpss_gas_pdss_hkft_phase", "vpss_soln_pdss_hkft_phase"]:
             ctmlPhase = ct.ThermoPhase("pdss_hkft.xml", name=name)
             yamlPhase = ct.ThermoPhase("pdss_hkft.yaml", name=name)
@@ -1193,6 +1254,7 @@ class ctml2yamlTest(utilities.CanteraTest):
             self.assertEqual(ctmlPhase.element_names, yamlPhase.element_names)
             self.assertEqual(ctmlPhase.species_names, yamlPhase.species_names)
             self.checkThermo(ctmlPhase, yamlPhase, [300, 500])
+        ct.make_deprecation_warnings_fatal()
 
     def test_lattice_solid(self):
         ctml2yaml.convert(

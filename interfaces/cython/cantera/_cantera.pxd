@@ -38,6 +38,11 @@ cdef extern from "cantera/cython/funcWrapper.h":
         CxxFunc1(callback_wrapper, void*)
         double eval(double) except +translate_exception
 
+cdef extern from "cantera/numerics/Func1.h":
+    cdef cppclass CxxTabulated1 "Cantera::Tabulated1":
+        CxxTabulated1(int, double*, double*, string) except +translate_exception
+        double eval(double) except +translate_exception
+
 cdef extern from "cantera/base/xml.h" namespace "Cantera":
     cdef cppclass XML_Node:
         XML_Node* findByName(string)
@@ -135,12 +140,17 @@ cdef extern from "cantera/base/Solution.h" namespace "Cantera":
 
 
 cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
+    ctypedef enum ThermoBasis:
+        mass "Cantera::ThermoBasis::mass",
+        molar "Cantera::ThermoBasis::molar"
+
+cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
     cdef cppclass CxxThermoPhase "Cantera::ThermoPhase":
         CxxThermoPhase()
 
         # miscellaneous
         string type()
-        string phaseOfMatter()
+        string phaseOfMatter() except +translate_exception
         string report(cbool, double) except +translate_exception
         cbool hasPhaseTransition()
         cbool isPure()
@@ -263,6 +273,12 @@ cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
         void setState_Psat(double P, double x) except +translate_exception
         void setState_TPQ(double T, double P, double Q) except +translate_exception
 
+        void setMixtureFraction(double mixFrac, const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
+        double mixtureFraction(const double* fuelComp, const double* oxComp, ThermoBasis basis, string element) except +translate_exception
+        void setEquivalenceRatio(double phi, const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
+        double equivalenceRatio(const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
+        double equivalenceRatio() except +translate_exception
+        double stoichAirFuelRatio(const double* fuelComp, const double* oxComp, ThermoBasis basis) except +translate_exception
 
 cdef extern from "cantera/thermo/IdealGasPhase.h":
     cdef cppclass CxxIdealGasPhase "Cantera::IdealGasPhase"
@@ -346,6 +362,7 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
         CxxArrhenius high_rate
         CxxThirdBody third_body
         shared_ptr[CxxFalloff] falloff
+        cbool allow_negative_pre_exponential_factor
 
     cdef cppclass CxxChemicallyActivatedReaction "Cantera::ChemicallyActivatedReaction" (CxxFalloffReaction):
         CxxChemicallyActivatedReaction()
@@ -607,6 +624,7 @@ cdef extern from "cantera/zerodim.h" namespace "Cantera":
     cdef cppclass CxxFlowDevice "Cantera::FlowDevice":
         CxxFlowDevice()
         string typeStr()
+        double massFlowRate() except +translate_exception
         double massFlowRate(double) except +translate_exception
         cbool install(CxxReactorBase&, CxxReactorBase&) except +translate_exception
         void setPressureFunction(CxxFunc1*) except +translate_exception
@@ -707,8 +725,8 @@ cdef extern from "cantera/oneD/Domain1D.h":
         string& id()
 
 
-cdef extern from "cantera/oneD/Inlet1D.h":
-    cdef cppclass CxxBdry1D "Cantera::Bdry1D":
+cdef extern from "cantera/oneD/Boundary1D.h":
+    cdef cppclass CxxBoundary1D "Cantera::Boundary1D":
         double temperature()
         void setTemperature(double)
         double mdot()
@@ -750,9 +768,12 @@ cdef extern from "cantera/oneD/StFlow.h":
         void setPressure(double)
         void enableRadiation(cbool)
         cbool radiationEnabled()
+        double radiativeHeatLoss(size_t)
         double pressure()
         void setFixedTempProfile(vector[double]&, vector[double]&)
         void setBoundaryEmissivities(double, double)
+        double leftEmissivity()
+        double rightEmissivity()
         void solveEnergyEqn()
         void fixTemperature()
         cbool doEnergy(size_t)
@@ -760,6 +781,7 @@ cdef extern from "cantera/oneD/StFlow.h":
         cbool withSoret()
         void setFreeFlow()
         void setAxisymmetricFlow()
+        string flowType()
 
 
 cdef extern from "cantera/oneD/IonFlow.h":
@@ -815,6 +837,8 @@ cdef extern from "cantera/oneD/Sim1D.h":
         size_t maxGridPoints(size_t) except +translate_exception
         void setGridMin(int, double) except +translate_exception
         void setFixedTemperature(double) except +translate_exception
+        double fixedTemperature()
+        double fixedTemperatureLocation()
         void setInterrupt(CxxFunc1*) except +translate_exception
         void setTimeStepCallback(CxxFunc1*)
         void setSteadyCallback(CxxFunc1*)
@@ -895,6 +919,7 @@ cdef extern from "cantera/cython/wrappers.h":
 
     # other ThermoPhase methods
     cdef void thermo_getMolecularWeights(CxxThermoPhase*, double*) except +translate_exception
+    cdef void thermo_getCharges(CxxThermoPhase*, double*) except +translate_exception
 
     # Kinetics per-reaction properties
     cdef void kin_getFwdRatesOfProgress(CxxKinetics*, double*) except +translate_exception
@@ -954,6 +979,7 @@ cdef class GasTransportData:
 cdef class _SolutionBase:
     cdef shared_ptr[CxxSolution] _base
     cdef CxxSolution* base
+    cdef str _source
     cdef shared_ptr[CxxThermoPhase] _thermo
     cdef CxxThermoPhase* thermo
     cdef shared_ptr[CxxKinetics] _kinetics
@@ -1011,6 +1037,10 @@ cdef class Func1:
     cdef CxxFunc1* func
     cdef object callable
     cdef object exception
+    cpdef void _set_callback(self, object) except *
+
+cdef class TabulatedFunction(Func1):
+    cpdef void _set_tables(self, object, object, string) except *
 
 cdef class ReactorBase:
     cdef CxxReactorBase* rbase
@@ -1090,7 +1120,7 @@ cdef class Domain1D:
     cdef public pybool have_user_tolerances
 
 cdef class Boundary1D(Domain1D):
-    cdef CxxBdry1D* boundary
+    cdef CxxBoundary1D* boundary
 
 cdef class Inlet1D(Boundary1D):
     cdef CxxInlet1D* inlet
@@ -1109,6 +1139,7 @@ cdef class Surface1D(Boundary1D):
 
 cdef class ReactingSurface1D(Boundary1D):
     cdef CxxReactingSurf1D* surf
+    cdef public Kinetics surface
 
 cdef class _FlowBase(Domain1D):
     cdef CxxStFlow* flow

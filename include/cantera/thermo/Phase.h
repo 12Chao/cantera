@@ -69,7 +69,7 @@ namespace Cantera
  * operate on a state vector, which by default uses the first two entries for
  * temperature and density (compressible substances) or temperature and
  * pressure (incompressible substances). If the substance is not pure in a
- * thermodyanmic sense (i.e. it may contain multiple species), the state also
+ * thermodynamic sense (that is, it may contain multiple species), the state also
  * contains nSpecies() entries that specify the composition by corresponding
  * mass fractions. Default definitions can be overloaded by derived classes.
  * For any phase, the native definition of its thermodynamic state is defined
@@ -112,6 +112,9 @@ public:
     /*!
      *  The XML_Node for the phase contains all of the input data used to set up
      *  the model for the phase during its initialization.
+     *
+     * @deprecated The XML input format is deprecated and will be removed in
+     *     Cantera 3.0.
      */
     XML_Node& xml() const;
 
@@ -123,6 +126,9 @@ public:
      *  construction operations.
      *
      *  @param xmlPhase Reference to the XML node corresponding to the phase
+     *
+     * @deprecated The XML input format is deprecated and will be removed in
+     *     Cantera 3.0.
      */
     void setXMLdata(XML_Node& xmlPhase);
 
@@ -470,6 +476,10 @@ public:
     //! Return a const reference to the internal vector of molecular weights.
     //! units = kg / kmol
     const vector_fp& molecularWeights() const;
+
+    //! Copy the vector of species charges into array charges.
+    //!     @param charges Output array of species charges (elem. charge)
+    void getCharges(double* charges) const;
 
     /// @name Composition
     //@{
@@ -867,6 +877,24 @@ public:
         m_root = root;
     }
 
+    //! Converts a compositionMap to a vector with entries for each species
+    //! Species that are not specified are set to zero in the vector
+    /*!
+     * @param[in] comp compositionMap containing the mixture composition
+     * @return vector with length m_kk
+     */
+    vector_fp getCompositionFromMap(const compositionMap& comp) const;
+
+    //! Converts a mixture composition from mole fractions to mass fractions
+    //!     @param[in] Y mixture composition in mass fractions (length m_kk)
+    //!     @param[out] X mixture composition in mole fractions (length m_kk)
+    void massFractionsToMoleFractions(const double* Y, double* X) const;
+
+    //! Converts a mixture composition from mass fractions to mole fractions
+    //!     @param[in] X mixture composition in mole fractions (length m_kk)
+    //!     @param[out] Y mixture composition in mass fractions (length m_kk)
+    void moleFractionsToMassFractions(const double* X, double* Y) const;
+
 protected:
     //! Ensure that phase is compressible.
     //! An error is raised if the state is incompressible
@@ -945,8 +973,9 @@ private:
     std::string m_id;
 
     //! Name of the phase.
-    //! Initially, this is the value of the ID attribute of the XML phase node.
-    //! It may be changed to another value during the course of a calculation.
+    //! Initially, this is the name specified in the YAML or CTI input file, or
+    //! the value of the ID attribute of the XML phase node. It may be changed
+    //! to another value during the course of a calculation.
     std::string m_name;
 
     doublereal m_temp; //!< Temperature (K). This is an independent variable

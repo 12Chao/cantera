@@ -284,6 +284,18 @@ extern "C" {
         }
     }
 
+    int thermo_getCharges(int n, size_t lenm, double* sc)
+    {
+        try {
+            ThermoPhase& p = ThermoCabinet::item(n);
+            p.checkSpeciesArraySize(lenm);
+            p.getCharges(sc);
+            return 0;
+        } catch (...) {
+            return handleAllExceptions(-1, ERR);
+        }
+    }
+
     int thermo_getName(int n, size_t lennm, char* nm)
     {
         try {

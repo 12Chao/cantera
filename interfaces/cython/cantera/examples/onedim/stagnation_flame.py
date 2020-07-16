@@ -17,8 +17,13 @@ been previously. (To see this, try setting prune to zero.)
 Requires: cantera >= 2.5.0
 """
 
-import cantera as ct
 import os
+import importlib
+
+import cantera as ct
+
+
+hdf_output = importlib.util.find_spec('h5py') is not None
 
 # parameter values
 p = 0.05 * ct.one_atm  # pressure
@@ -68,16 +73,24 @@ sim.show_solution()
 
 sim.solve(loglevel, auto=True)
 
-outfile = 'stflame1.xml'
+if hdf_output:
+    outfile = 'stagnation_flame.h5'
+else:
+    outfile = 'stagnation_flame.xml'
 if os.path.exists(outfile):
     os.remove(outfile)
 
 for m, md in enumerate(mdot):
     sim.inlet.mdot = md
     sim.solve(loglevel)
-    sim.save(outfile, 'mdot{0}'.format(m), 'mdot = {0} kg/m2/s'.format(md))
+    if hdf_output:
+        sim.write_hdf(outfile, group='mdot{0}'.format(m),
+                      description='mdot = {0} kg/m2/s'.format(md))
+    else:
+        sim.save(outfile, 'mdot{0}'.format(m),
+                 'mdot = {0} kg/m2/s'.format(md))
 
     # write the velocity, temperature, and mole fractions to a CSV file
-    sim.write_csv('stflame1_{0}.csv'.format(m), quiet=False)
+    sim.write_csv('stagnation_flame_{0}.csv'.format(m), quiet=False)
 
 sim.show_stats()

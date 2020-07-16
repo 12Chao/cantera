@@ -35,6 +35,7 @@ cdef class _SolutionBase:
             self.kinetics = other.kinetics
             self.transport = other.transport
             self._base = other._base
+            self._source = other._source
             self._thermo = other._thermo
             self._kinetics = other._kinetics
             self._transport = other._transport
@@ -45,6 +46,7 @@ cdef class _SolutionBase:
 
         # Assign base and set managers to NULL
         self._base = CxxNewSolution()
+        self._source = None
         self.base = self._base.get()
         self.thermo = NULL
         self.kinetics = NULL
@@ -64,7 +66,7 @@ cdef class _SolutionBase:
         self.base.setThermo(self._thermo)
         self.base.setKinetics(self._kinetics)
 
-        self._selected_species = np.ndarray(0, dtype=np.integer)
+        self._selected_species = np.ndarray(0, dtype=np.uint64)
 
     def __init__(self, *args, **kwargs):
         if isinstance(self, Transport):
@@ -84,6 +86,13 @@ cdef class _SolutionBase:
 
         def __set__(self, name):
             self.base.setName(stringify(name))
+
+    property source:
+        """
+        The source of this object (such as a file name).
+        """
+        def __get__(self):
+            return self._source
 
     property composite:
         """
@@ -108,8 +117,10 @@ cdef class _SolutionBase:
         cdef CxxAnyMap root
         if infile:
             root = AnyMapFromYamlFile(stringify(infile))
+            self._source = infile
         elif source:
             root = AnyMapFromYamlString(stringify(source))
+            self._source = 'custom YAML'
 
         phaseNode = root[stringify("phases")].getMapWhere(stringify("name"),
                                                           stringify(name))
@@ -119,7 +130,9 @@ cdef class _SolutionBase:
             self._thermo = newPhase(phaseNode, root)
             self.thermo = self._thermo.get()
         else:
-            self.thermo = NULL
+            msg = ("Cannot instantiate a standalone '{}' object; use "
+                   "'Solution' instead").format(type(self).__name__)
+            raise NotImplementedError(msg)
 
         # Kinetics
         cdef vector[CxxThermoPhase*] v
@@ -142,8 +155,10 @@ cdef class _SolutionBase:
         """
         if infile:
             rootNode = CxxGetXmlFile(stringify(infile))
+            self._source = infile
         elif source:
             rootNode = CxxGetXmlFromString(stringify(source))
+            self._source = 'custom CTI/XML'
 
         # Get XML data
         cdef XML_Node* phaseNode
@@ -159,7 +174,9 @@ cdef class _SolutionBase:
             self.thermo = newPhase(deref(phaseNode))
             self._thermo.reset(self.thermo)
         else:
-            self.thermo = NULL
+            msg = ("Cannot instantiate a standalone '{}' object; use "
+                   "'Solution' instead").format(type(self).__name__)
+            raise NotImplementedError(msg)
 
         # Kinetics
         cdef vector[CxxThermoPhase*] v
@@ -180,6 +197,7 @@ cdef class _SolutionBase:
         Instantiate a set of new Cantera C++ objects based on a string defining
         the model type and a list of Species objects.
         """
+        self._source = 'custom parts'
         self.thermo = newThermoPhase(stringify(thermo))
         self._thermo.reset(self.thermo)
         self.thermo.addUndefinedElements()

@@ -1,12 +1,13 @@
 # Contributing to Cantera
 
-* For significant changes, consider starting a discussion on the Cantera
-  Users' Group to plan your modifications so that they can be implemented
+* For significant changes, please start a discussion on the Cantera
+  Users' Group or create an issue on the [Cantera/enhancements](https://github.com/Cantera/enhancements/issues/new/choose) repository
+  on GitHub to plan your modifications so that they can be implemented
   efficiently and in a way that doesn't conflict with any other planned
   future development
 * Fork the `Cantera/cantera` repository on Github
 * Clone your new repository or add it as a remote to an existing repository
-* Check out the existing `master` branch, then start a new feature branch for
+* Check out the existing `main` branch, then start a new feature branch for
   your work
 * When making changes, write code that is consistent with the surrounding code
   (see the [style guidelines](#style-guidelines) below)
@@ -25,18 +26,21 @@
   * Use Git's history-rewriting features (i.e., `git rebase -i`; see
     https://help.github.com/articles/about-git-rebase/) to organize your commits
     and squash "fixup" commits and reversions.
-  * Do not merge your branch with `master`. If needed, you should rebase your branch
-    onto the most recent `HEAD` commit of `master`.
+  * Do not merge your branch with `main`. If needed, you should rebase your branch
+    onto the most recent `HEAD` commit of `main`.
   * Periodically run the test suite (`scons test`) to make sure that your
     changes are not causing any test failures.
-* Submit a Pull Request on Github. Check the results of the continuous-
-  integration tests run using Travis and AppVeyor and resolve any issues that
-  arise.
+* Push the changes on your new feature branch to your forked copy of the
+  `Cantera/cantera` repository on GitHub.
+
+* Submit a Pull Request on Github, from your forked copy. Check the results 
+  of the continuous-integration tests run using Travis and AppVeyor and resolve 
+  any issues that arise.
 * Additional discussion of good Git & Github workflow is provided at
   http://matplotlib.org/devel/gitwash/development_workflow.html and
   https://docs.scipy.org/doc/numpy-1.15.0/dev/gitwash/development_workflow.html
 * Cantera is licensed under a [BSD
-  license](https://github.com/Cantera/cantera/blob/master/License.txt) which
+  license](https://github.com/Cantera/cantera/blob/main/License.txt) which
   allows others to freely modify the code, and if your Pull Request is accepted,
   then that code will be release under this license as well. The copyright for
   Cantera is held collectively by the contributors. If you have made a

@@ -184,12 +184,6 @@ protected:
     //! @param t     the current time
     virtual void evalWalls(double t);
 
-    //! Evaluate inlet and outlet mass flow rates. This is called in evalEqs()
-    //! before setting the state of #m_thermo, since calling the mass flow rate
-    //! functions may modify ThermoPhase objects that are shared with other
-    //! reactors.
-    virtual void evalFlowDevices(double t);
-
     //! Evaluate terms related to surface reactions. Calculates #m_sdot and rate
     //! of change in surface species coverages.
     //! @param t          the current time
@@ -199,6 +193,14 @@ protected:
 
     //! Update the state of SurfPhase objects attached to this reactor
     virtual void updateSurfaceState(double* y);
+
+    //! Update the state information needed by connected reactors and flow
+    //! devices. Called from updateState().
+    //! @param updatePressure  Indicates whether to update #m_pressure. Should
+    //!     `true` for reactors where the pressure is a dependent property,
+    //!     calculated from the state, and `false` when the pressure is constant
+    //!     or an independent variable.
+    virtual void updateConnected(bool updatePressure);
 
     //! Get initial conditions for SurfPhase objects attached to this reactor
     virtual void getSurfaceInitialConditions(double* y);

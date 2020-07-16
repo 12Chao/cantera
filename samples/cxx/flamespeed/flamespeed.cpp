@@ -1,10 +1,11 @@
 /*!
  * @file flamespeed.cpp
  * C++ demo program to compute flame speeds using GRI-Mech.
+ * Usage: flamespeed [equivalence_ratio] [refine_grid] [loglevel]
  */
 
 #include "cantera/oneD/Sim1D.h"
-#include "cantera/oneD/Inlet1D.h"
+#include "cantera/oneD/Boundary1D.h"
 #include "cantera/oneD/StFlow.h"
 #include "cantera/thermo/IdealGasPhase.h"
 #include "cantera/transport.h"
@@ -13,7 +14,7 @@
 using namespace Cantera;
 using fmt::print;
 
-int flamespeed(double phi)
+int flamespeed(double phi, bool refine_grid, int loglevel)
 {
     try {
         auto sol = newSolution("gri30.yaml", "gri30", "None");
@@ -25,15 +26,10 @@ int flamespeed(double phi)
         size_t nsp = gas->nSpecies();
         vector_fp x(nsp, 0.0);
 
-        double C_atoms = 1.0;
-        double H_atoms = 4.0;
-        double ax = C_atoms + H_atoms / 4.0;
-        double fa_stoic = 1.0 / (4.76 * ax);
-        x[gas->speciesIndex("CH4")] = 1.0;
-        x[gas->speciesIndex("O2")] = 0.21 / phi / fa_stoic;
-        x[gas->speciesIndex("N2")] = 0.79 / phi/ fa_stoic;
+        gas->setEquivalenceRatio(phi, "CH4", "O2:0.21,N2:0.79");
+        gas->setState_TP(temp, pressure);
+        gas->getMoleFractions(x.data());
 
-        gas->setState_TPX(temp, pressure, x.data());
         double rho_in = gas->density();
 
         vector_fp yin(nsp);
@@ -101,7 +97,7 @@ int flamespeed(double phi)
 
         double uout = inlet.mdot()/rho_out;
         value = {uin, uin, uout, uout};
-        flame.setInitialGuess("u",locs,value);
+        flame.setInitialGuess("velocity",locs,value);
         value = {temp, temp, Tad, Tad};
         flame.setInitialGuess("T",locs,value);
 
@@ -123,8 +119,6 @@ int flamespeed(double phi)
 
         flame.setRefineCriteria(flowdomain,ratio,slope,curve);
 
-        int loglevel=1;
-
         // Solve freely propagating flame
 
         // Linearly interpolate to find location where this temperature would
@@ -132,24 +126,26 @@ int flamespeed(double phi)
         // remainder of calculation.
         flame.setFixedTemperature(0.5 * (temp + Tad));
         flow.solveEnergyEqn();
-        bool refine_grid = true;
 
         flame.solve(loglevel,refine_grid);
-        double flameSpeed_mix = flame.value(flowdomain,flow.componentIndex("u"),0);
+        double flameSpeed_mix = flame.value(flowdomain,
+                                            flow.componentIndex("velocity"),0);
         print("Flame speed with mixture-averaged transport: {} m/s\n",
               flameSpeed_mix);
 
         // now switch to multicomponent transport
         flow.setTransport(*trmulti);
         flame.solve(loglevel, refine_grid);
-        double flameSpeed_multi = flame.value(flowdomain,flow.componentIndex("u"),0);
+        double flameSpeed_multi = flame.value(flowdomain,
+                                              flow.componentIndex("velocity"),0);
         print("Flame speed with multicomponent transport: {} m/s\n",
               flameSpeed_multi);
 
         // now enable Soret diffusion
         flow.enableSoret(true);
         flame.solve(loglevel, refine_grid);
-        double flameSpeed_full = flame.value(flowdomain,flow.componentIndex("u"),0);
+        double flameSpeed_full = flame.value(flowdomain,
+                                             flow.componentIndex("velocity"),0);
         print("Flame speed with multicomponent transport + Soret: {} m/s\n",
               flameSpeed_full);
 
@@ -159,9 +155,12 @@ int flamespeed(double phi)
               "z (m)", "T (K)", "U (m/s)", "Y(CO)");
         for (size_t n = 0; n < flow.nPoints(); n++) {
             Tvec.push_back(flame.value(flowdomain,flow.componentIndex("T"),n));
-            COvec.push_back(flame.value(flowdomain,flow.componentIndex("CO"),n));
-            CO2vec.push_back(flame.value(flowdomain,flow.componentIndex("CO2"),n));
-            Uvec.push_back(flame.value(flowdomain,flow.componentIndex("u"),n));
+            COvec.push_back(flame.value(flowdomain,
+                                        flow.componentIndex("CO"),n));
+            CO2vec.push_back(flame.value(flowdomain,
+                                         flow.componentIndex("CO2"),n));
+            Uvec.push_back(flame.value(flowdomain,
+                                       flow.componentIndex("velocity"),n));
             zvec.push_back(flow.grid(n));
             print("{:9.6f}\t{:8.3f}\t{:5.3f}\t{:7.5f}\n",
                   flow.grid(n), Tvec[n], Uvec[n], COvec[n]);
@@ -184,10 +183,22 @@ int flamespeed(double phi)
     return 0;
 }
 
-int main()
+int main(int argc, char** argv)
 {
     double phi;
-    print("Enter phi: ");
-    std::cin >> phi;
-    return flamespeed(phi);
+    int loglevel = 1;
+    bool refine_grid = true;
+    if (argc >= 2) {
+        phi = fpValue(argv[1]);
+    } else {
+        print("Enter phi: ");
+        std::cin >> phi;
+    }
+    if (argc >= 3) {
+        refine_grid = bool(intValue(argv[2]));
+    }
+    if (argc >= 4) {
+        loglevel = intValue(argv[3]);
+    }
+    return flamespeed(phi, refine_grid, loglevel);
 }

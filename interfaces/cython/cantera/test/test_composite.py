@@ -2,6 +2,7 @@ from os.path import join as pjoin
 import os
 
 import numpy as np
+from collections import OrderedDict
 import warnings
 
 try:
@@ -9,7 +10,9 @@ try:
 except ImportError:
     from ruamel import yaml
 
+
 import cantera as ct
+from cantera.composite import _h5py, _pandas
 from . import utilities
 
 
@@ -101,9 +104,9 @@ class TestModels(utilities.CanteraTest):
                     a.TPX = T, P, X
 
                 # default columns
-                data, labels = a.collect_data()
+                data = a.collect_data()
                 b = ct.SolutionArray(sol)
-                b.restore_data(data, labels)
+                b.restore_data(data)
                 check(a, b)
 
             except Exception as inst:
@@ -118,6 +121,103 @@ class TestModels(utilities.CanteraTest):
                     msg = msg.format(ph['name'], ph['thermo'], sol.TPX)
                     raise TypeError(msg) from inst
 
+
+class TestSolutionArrayIO(utilities.CanteraTest):
+    """ Test SolutionArray file IO """
+    @classmethod
+    def setUpClass(cls):
+        utilities.CanteraTest.setUpClass()
+        cls.gas = ct.Solution('h2o2.yaml')
+
+    def test_collect_data(self):
+        states = ct.SolutionArray(self.gas)
+        collected = states.collect_data(tabular=True)
+        self.assertIsInstance(collected, dict)
+        self.assertIn('Y_H2', collected)
+        self.assertEqual(len(collected['Y_H2']), 0)
+
+        states = ct.SolutionArray(self.gas)
+        collected = states.collect_data(tabular=False, species='X')
+        self.assertIn('X', collected)
+        self.assertEqual(collected['X'].shape, (0, self.gas.n_species))
+
+    def test_write_csv(self):
+        states = ct.SolutionArray(self.gas, 7)
+        states.TPX = np.linspace(300, 1000, 7), 2e5, 'H2:0.5, O2:0.4'
+        states.equilibrate('HP')
+
+        outfile = pjoin(self.test_work_dir, 'solutionarray.csv')
+        states.write_csv(outfile)
+
+        data = np.genfromtxt(outfile, names=True, delimiter=',')
+        self.assertEqual(len(data), 7)
+        self.assertEqual(len(data.dtype), self.gas.n_species + 2)
+        self.assertIn('Y_H2', data.dtype.fields)
+
+        b = ct.SolutionArray(self.gas)
+        b.read_csv(outfile)
+        self.assertTrue(np.allclose(states.T, b.T))
+        self.assertTrue(np.allclose(states.P, b.P))
+        self.assertTrue(np.allclose(states.X, b.X))
+
+    @utilities.unittest.skipIf(isinstance(_pandas, ImportError), "pandas is not installed")
+    def test_to_pandas(self):
+
+        states = ct.SolutionArray(self.gas, 7)
+        states.TPX = np.linspace(300, 1000, 7), 2e5, 'H2:0.5, O2:0.4'
+        try:
+            # this will run through if pandas is installed
+            df = states.to_pandas()
+            self.assertEqual(df.shape[0], 7)
+        except ImportError as err:
+            # pandas is not installed and correct exception is raised
+            pass
+
+    @utilities.unittest.skipIf(isinstance(_h5py, ImportError), "h5py is not installed")
+    def test_write_hdf(self):
+
+        outfile = pjoin(self.test_work_dir, 'solutionarray.h5')
+        if os.path.exists(outfile):
+            os.remove(outfile)
+
+        extra = {'foo': range(7), 'bar': range(7)}
+        meta = {'spam': 'eggs', 'hello': 'world'}
+        states = ct.SolutionArray(self.gas, 7, extra=extra, meta=meta)
+        states.TPX = np.linspace(300, 1000, 7), 2e5, 'H2:0.5, O2:0.4'
+        states.equilibrate('HP')
+
+        states.write_hdf(outfile, attrs={'foobar': 'spam and eggs'})
+
+        b = ct.SolutionArray(self.gas)
+        attr = b.read_hdf(outfile)
+        self.assertTrue(np.allclose(states.T, b.T))
+        self.assertTrue(np.allclose(states.P, b.P))
+        self.assertTrue(np.allclose(states.X, b.X))
+        self.assertTrue(np.allclose(states.foo, b.foo))
+        self.assertTrue(np.allclose(states.bar, b.bar))
+        self.assertEqual(b.meta['spam'], 'eggs')
+        self.assertEqual(b.meta['hello'], 'world')
+        self.assertEqual(attr['foobar'], 'spam and eggs')
+
+        gas = ct.Solution('gri30.yaml')
+        ct.SolutionArray(gas, 10).write_hdf(outfile)
+
+        with _h5py.File(outfile, 'a') as hdf:
+            hdf.create_group('spam')
+
+        c = ct.SolutionArray(self.gas)
+        with self.assertRaisesRegex(IOError, 'does not contain valid data'):
+            c.read_hdf(outfile, group='spam')
+        with self.assertRaisesRegex(IOError, 'does not contain group'):
+            c.read_hdf(outfile, group='eggs')
+        with self.assertRaisesRegex(IOError, 'phases do not match'):
+            c.read_hdf(outfile, group='group1')
+        with self.assertRaisesRegex(IOError, 'does not contain data'):
+            c.read_hdf(outfile, subgroup='foo')
+
+        states.write_hdf(outfile, group='foo/bar/baz')
+        c.read_hdf(outfile, group='foo/bar/baz')
+        self.assertTrue(np.allclose(states.T, c.T))
 
 class TestRestoreIdealGas(utilities.CanteraTest):
     """ Test restoring of the IdealGas class """
@@ -148,84 +248,85 @@ class TestRestoreIdealGas(utilities.CanteraTest):
             X /= X.sum()
             a.append(T=T, P=P, X=X)
 
-        data, labels = a.collect_data()
+        data = a.collect_data()
 
         # basic restore
         b = ct.SolutionArray(self.gas)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b)
 
         # skip concentrations
         b = ct.SolutionArray(self.gas)
-        b.restore_data(data[:, :2], labels[:2])
+        b.restore_data({'T': data['T'], 'density': data['density']})
         self.assertTrue(np.allclose(a.T, b.T))
         self.assertTrue(np.allclose(a.density, b.density))
         self.assertFalse(np.allclose(a.X, b.X))
 
         # wrong data shape
         b = ct.SolutionArray(self.gas)
-        with self.assertRaises(TypeError):
-            b.restore_data(data.ravel(), labels)
-
-        # inconsistent data
-        b = ct.SolutionArray(self.gas)
         with self.assertRaises(ValueError):
-            b.restore_data(data, labels[:-2])
+            b.restore_data(OrderedDict([(k, v[np.newaxis, :])
+                                        for k, v in data.items()]))
 
         # inconsistent shape of receiving SolutionArray
         b = ct.SolutionArray(self.gas, 9)
         with self.assertRaises(ValueError):
-            b.restore_data(data, labels)
+            b.restore_data(data)
 
         # incomplete state
         b = ct.SolutionArray(self.gas)
         with self.assertRaises(ValueError):
-            b.restore_data(data[:,1:], labels[1:])
+            b.restore_data(OrderedDict([tup for i, tup in enumerate(data.items())
+                                        if i]))
 
         # add extra column
-        t = np.arange(10, dtype=float)[:, np.newaxis]
+        t = np.arange(10, dtype=float)
 
         # auto-detection of extra
         b = ct.SolutionArray(self.gas)
-        b.restore_data(np.hstack([t, data]), ['time'] + labels)
+        data_mod = OrderedDict(data)
+        data_mod['time'] = t
+        b.restore_data(data_mod)
         check(a, b)
 
         # explicit extra
         b = ct.SolutionArray(self.gas, extra=('time',))
-        b.restore_data(np.hstack([t, data]), ['time'] + labels)
+        b.restore_data(data_mod)
         check(a, b)
-        self.assertTrue((b.time == t.ravel()).all())
+        self.assertArrayNear(b.time, t)
 
         # wrong extra
         b = ct.SolutionArray(self.gas, extra=('xyz',))
         with self.assertRaises(KeyError):
-            b.restore_data(np.hstack([t, data]), ['time'] + labels)
+            b.restore_data(data_mod)
 
         # missing extra
         b = ct.SolutionArray(self.gas, extra=('time'))
         with self.assertRaises(KeyError):
-            b.restore_data(data, labels)
+            b.restore_data(data)
 
         # inconsistent species
-        labels[-1] = 'Y_invalid'
+        data_mod = a.collect_data(tabular=True)
+        val = data_mod.pop('Y_AR')
+        data_mod['Y_invalid'] = val
         b = ct.SolutionArray(self.gas)
         with self.assertRaises(ValueError):
-            b.restore_data(data, labels)
+            b.restore_data(data_mod)
 
         # incomplete species info (using threshold)
-        data, labels = a.collect_data(threshold=1e-6)
+        data = a.collect_data(threshold=1e-6)
 
         # basic restore
         b = ct.SolutionArray(self.gas)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b, atol=1e-6)
 
         # skip calculated properties
         cols = ('T', 'P', 'X', 'gibbs_mass', 'forward_rates_of_progress')
-        data, labels = a.collect_data(cols=cols, threshold=1e-6)
+        data = a.collect_data(cols=cols, threshold=1e-6)
 
         b = ct.SolutionArray(self.gas)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b)
         self.assertTrue(len(b._extra) == 0)
 
@@ -245,35 +346,35 @@ class TestRestorePureFluid(utilities.CanteraTest):
             self.assertArrayNear(a.Q, b.Q)
 
         self.assertTrue(self.water.has_phase_transition)
-            
+
         # benchmark
         a = ct.SolutionArray(self.water, 10)
         a.TQ = 373.15, np.linspace(0., 1., 10)
 
         # complete data
         cols = ('T', 'P', 'Q')
-        data, labels = a.collect_data(cols=cols)
+        data = a.collect_data(cols=cols)
         b = ct.SolutionArray(self.water)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b)
 
         # partial data
         cols = ('T', 'Q')
-        data, labels = a.collect_data(cols=cols)
+        data = a.collect_data(cols=cols)
         b = ct.SolutionArray(self.water)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b)
 
         # default columns
-        data, labels = a.collect_data()
-        self.assertEqual(labels, ['T', 'density'])
+        data = a.collect_data()
+        self.assertEqual(list(data.keys()), ['T', 'density'])
         b = ct.SolutionArray(self.water)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b)
 
         # default state plus Y
         cols = ('T', 'D', 'Y')
-        data, labels = a.collect_data(cols=cols)
+        data = a.collect_data(cols=cols)
         b = ct.SolutionArray(self.water)
-        b.restore_data(data, labels)
+        b.restore_data(data)
         check(a, b)

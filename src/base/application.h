@@ -247,23 +247,20 @@ public:
     /*!
      * This routine will search for a file in the default locations specified
      * for the application. See the routine setDefaultDirectories() listed
-     * above.
+     * above. The first directory searched is usually the current working
+     * directory.
      *
-     * The default set of directories specified for the application will be
-     * searched if a '/' or an '\\' is not found in the name. If either is found
-     * then a relative path name is presumed, and the default directories are
-     * not searched.
+     * The default set of directories will not be searched if an absolute path
+     * (for example, one starting with `/` or `C:\`) or a path relative to the
+     * user's home directory (for example, starting with `~/`) is specified.
      *
      * The presence of the file is determined by whether the file can be
      * opened for reading by the current user.
      *
      * @param name Name of the input file to be searched for
-     * @return  The absolute path name of the first matching file is
-     *     returned. If a relative path name is indicated, the relative path
-     *     name is returned.
+     * @return  The absolute path name of the first matching file
      *
-     * If the file is not found, a message is written to stdout and a
-     * CanteraError exception is thrown.
+     * If the file is not found a CanteraError exception is thrown.
      *
      * @ingroup inputfiles
      */
@@ -291,6 +288,9 @@ public:
      *
      * @param file String containing the relative or absolute file name
      * @param debug Debug flag
+     *
+     * @deprecated The XML input format is deprecated and will be removed in
+     *     Cantera 3.0.
      */
     XML_Node* get_XML_File(const std::string& file, int debug=0);
 
@@ -302,6 +302,9 @@ public:
      * stored in the cache.
      * @param text    CTI or CTML string
      * @return        Root of the corresponding XML tree
+     *
+     * @deprecated The XML input format is deprecated and will be removed in
+     *     Cantera 3.0.
      */
     XML_Node* get_XML_from_string(const std::string& text);
 
@@ -411,6 +414,9 @@ protected:
     //! Current vector of XML file trees that have been previously parsed
     //! The second element of the value is used to store the last-modified time
     //! for the file, to enable change detection.
+    //!
+    //! @deprecated The XML input format is deprecated and will be removed in
+    //!     Cantera 3.0.
     std::map<std::string, std::pair<XML_Node*, int> > xmlfiles;
     //! Vector of deprecation warnings that have been emitted (to suppress
     //! duplicates)

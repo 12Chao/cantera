@@ -120,13 +120,16 @@ TEST(ThermoFromYaml, WaterSSTP)
     EXPECT_NEAR(thermo->enthalpy_mass(), -15649685.52296013, 1e-6);
 }
 
+//! @todo Remove after Cantera 2.5 - class FixedChemPotSSTP is deprecated
 TEST(ThermoFromYaml, FixedChemPot)
 {
+    suppress_deprecation_warnings();
     auto thermo = newThermo("thermo-models.yaml", "Li-fixed");
     EXPECT_EQ(thermo->nSpecies(), (size_t) 1);
     double mu;
     thermo->getChemPotentials(&mu);
     EXPECT_DOUBLE_EQ(mu, -2.3e7);
+    make_deprecation_warnings_fatal();
 }
 
 TEST(ThermoFromYaml, Margules)
@@ -234,9 +237,13 @@ TEST(ThermoFromYaml, IonsFromNeutral_fromString)
     EXPECT_NEAR(mu[1], -2.88157316e+06, 1e-1);
 }
 
+//! @todo Remove after Cantera 2.5 - "gas" mode of IdealSolnGasVPSS is
+//!     deprecated
 TEST(ThermoFromYaml, IdealSolnGas_gas)
 {
+    suppress_deprecation_warnings();
     auto thermo = newThermo("thermo-models.yaml", "IdealSolnGas-gas");
+    make_deprecation_warnings_fatal();
     thermo->equilibrate("HP");
     EXPECT_NEAR(thermo->temperature(), 479.929, 1e-3); // based on h2o2.cti
     EXPECT_NEAR(thermo->moleFraction("H2O"), 0.01, 1e-4);

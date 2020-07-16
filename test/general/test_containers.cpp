@@ -1,4 +1,5 @@
 #include "gtest/gtest.h"
+#include "gmock/gmock.h"
 #include "cantera/base/AnyMap.h"
 
 using namespace Cantera;
@@ -291,6 +292,23 @@ TEST(AnyMap, iterators)
     EXPECT_TRUE(std::find(keys.begin(), keys.end(), "bar") != keys.end());
 }
 
+TEST(AnyMap, null_values)
+{
+    AnyMap m = AnyMap::fromYamlString(
+        "{a: 1, b: ~, c: , d: 5}"
+    );
+    EXPECT_EQ(m.size(), (size_t) 4);
+    EXPECT_TRUE(m.at("c").is<void>());
+
+    try {
+        m.at("b").asString();
+        FAIL();
+    } catch (CanteraError& err) {
+        EXPECT_THAT(err.what(),
+                    testing::HasSubstr("Key 'b' not found or contains no value"));
+    }
+}
+
 TEST(AnyMap, loadYaml)
 {
     AnyMap m = AnyMap::fromYamlString(
@@ -320,6 +338,26 @@ TEST(AnyMap, loadYaml)
     EXPECT_EQ(coeffs.size(), (size_t) 2);
     EXPECT_EQ(coeffs[0].size(), (size_t) 7);
     EXPECT_DOUBLE_EQ(coeffs[1][2], -8.280690600E-07);
+}
+
+TEST(AnyMap, missingKey)
+{
+    AnyMap root = AnyMap::fromYamlFile("ideal-gas.yaml");
+    try {
+        root["spam"].getMapWhere("name", "unknown");
+    } catch (std::exception& ex) {
+        EXPECT_THAT(ex.what(), ::testing::HasSubstr("Key 'spam' not found"));
+    }
+}
+
+TEST(AnyMap, missingKeyAt)
+{
+    AnyMap root = AnyMap::fromYamlFile("ideal-gas.yaml");
+    try {
+        root.at("spam").getMapWhere("name", "unknown");
+    } catch (std::exception& ex) {
+        EXPECT_THAT(ex.what(), ::testing::HasSubstr("Key 'spam' not found"));
+    }
 }
 
 TEST(AnyMap, loadDeprecatedYaml)

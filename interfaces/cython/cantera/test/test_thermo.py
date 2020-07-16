@@ -1,5 +1,6 @@
 from os.path import join as pjoin
 from pathlib import Path
+from collections import OrderedDict
 import os
 import numpy as np
 import gc
@@ -12,6 +13,25 @@ from . import utilities
 class TestThermoPhase(utilities.CanteraTest):
     def setUp(self):
         self.phase = ct.Solution('h2o2.xml')
+
+    def test_source(self):
+        self.assertEqual(self.phase.source, 'h2o2.xml')
+
+    def test_missing_phases_key(self):
+        yaml = '''
+        species:
+        - name: H
+          composition: {H: 1}
+          thermo:
+            model: NASA7
+            temperature-ranges: [200.0, 1000.0, 6000.0]
+            data:
+            - [2.5, 0.0, 0.0, 0.0, 0.0, 2.547366e+04, -0.44668285]
+            - [2.5, 0.0, 0.0, 0.0, 0.0, 2.547366e+04, -0.44668285]
+            note: L6/94
+        '''
+        with self.assertRaisesRegex(ct.CanteraError, "Key 'phases' not found"):
+            _ = ct.Solution(yaml=yaml)
 
     def test_base_attributes(self):
         self.assertIsInstance(self.phase.name, str)
@@ -129,6 +149,15 @@ class TestThermoPhase(utilities.CanteraTest):
             for j,aw in enumerate(atomic_weights):
                 test_weight += aw * self.phase.n_atoms(i,j)
             self.assertNear(test_weight, mw)
+
+    def test_charges(self):
+        gas = ct.Solution('ch4_ion.yaml')
+        charges = gas.charges
+        test = {'E': -1., 'N2': 0., 'H3O+': 1.}
+        for species, charge in test.items():
+            self.assertIn(species, gas.species_names)
+            index = gas.species_index(species)
+            self.assertEqual(charges[index], charge)
 
     def test_setComposition(self):
         X = np.zeros(self.phase.n_species)
@@ -273,37 +302,102 @@ class TestThermoPhase(utilities.CanteraTest):
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=ct.Species.listFromFile('gri30.xml') + sulfur_species,
                           reactions=ct.Reaction.listFromFile('gri30.xml'))
-        gas.set_equivalence_ratio(2.0, 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125, CH:0.125')
-        self.assertNear(gas['SO2'].X[0], 31.0/212.0)
-        self.assertNear(gas['O2'].X[0],  31.0/106.0)
-        self.assertNear(gas['SO'].X[0],  11.0/106.0)
-        self.assertNear(gas['CO2'].X[0], 31.0/424.0)
-        self.assertNear(gas['CH3'].X[0], 11.0/53.0)
-        self.assertNear(gas['N2'].X[0],  11.0/212.0)
-        self.assertNear(gas['CH'].X[0],  31.0/424.0)
-        self.assertNear(gas['OH'].X[0],  11.0/212.0)
+        fuel = 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125'
+        ox = 'O2:0.5, SO2:0.25, CO2:0.125, CH:0.125'
 
-    def test_get_equivalence_ratio(self):
+        def test_sulfur_results(gas, fuel, ox, basis):
+            gas.set_equivalence_ratio(2.0, fuel, ox, basis)
+            Z = gas.mixture_fraction(fuel, ox, basis)
+            self.assertNear(gas.stoich_air_fuel_ratio(fuel, ox, basis)/((1.0-Z)/Z),  2.0)
+            gas.set_mixture_fraction(Z, fuel, ox, basis)
+            self.assertNear(gas['SO2'].X[0], 31.0/212.0)
+            self.assertNear(gas['O2'].X[0],  31.0/106.0)
+            self.assertNear(gas['SO'].X[0],  11.0/106.0)
+            self.assertNear(gas['CO2'].X[0], 31.0/424.0)
+            self.assertNear(gas['CH3'].X[0], 11.0/53.0)
+            self.assertNear(gas['N2'].X[0],  11.0/212.0)
+            self.assertNear(gas['CH'].X[0],  31.0/424.0)
+            self.assertNear(gas['OH'].X[0],  11.0/212.0)
+            self.assertNear(gas.equivalence_ratio(fuel, ox, basis),  2.0)
+
+        test_sulfur_results(gas, fuel, ox, 'mole')
+
+        gas.TPX = None, None, fuel
+        fuel = gas.Y
+        gas.TPX = None, None, ox
+        ox = gas.Y
+        test_sulfur_results(gas, fuel, ox, 'mass')
+
+    def test_equivalence_ratio(self):
         gas = ct.Solution('gri30.xml')
         for phi in np.linspace(0.5, 2.0, 5):
             gas.set_equivalence_ratio(phi, 'CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76')
-            self.assertNear(phi, gas.get_equivalence_ratio())
+            self.assertNear(phi, gas.equivalence_ratio('CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76'))
         # Check sulfur species
         sulfur_species = [k for k in ct.Species.listFromFile('nasa_gas.xml') if k.name in ("SO", "SO2")]
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=ct.Species.listFromFile('gri30.xml') + sulfur_species)
         for phi in np.linspace(0.5, 2.0, 5):
             gas.set_equivalence_ratio(phi, 'CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125')
-            self.assertNear(phi, gas.get_equivalence_ratio())
-        gas.X = 'CH4:1, N2:1, CO2:1, H2O:1'
-        self.assertEqual(gas.get_equivalence_ratio(), np.inf)
-        # Check behavior with oxidizers besides O2, and check optional oxidizer arguments
-        gas.set_equivalence_ratio(0.5, 'CH4:0.8, CH3OH:0.2', 'O2:1.0, N2:3.76, NO:0.1')
-        self.assertNear(0.5, gas.get_equivalence_ratio())
-        gas.X = 'CH4:1, O2:2, NO:0.1'
-        self.assertNear(1.0, gas.get_equivalence_ratio(ignore=['NO']))
-        self.assertNear(0.975, gas.get_equivalence_ratio(oxidizers=['O2']))
-        self.assertNear(gas.get_equivalence_ratio(), gas.get_equivalence_ratio(oxidizers=['O2', 'NO']))
+            self.assertNear(phi, gas.equivalence_ratio('CH3:0.5, SO:0.25, OH:0.125, N2:0.125', 'O2:0.5, SO2:0.25, CO2:0.125'))
+        gas.X = 'CH4:1' # pure fuel
+        self.assertEqual(gas.equivalence_ratio(), np.inf)
+
+    def test_get_set_equivalence_ratio_functions(self):
+        fuel = "CH4:0.2,O2:0.02,N2:0.1,CO:0.05,CO2:0.02"
+        ox = "O2:0.21,N2:0.79,CO:0.04,CH4:0.01,CO2:0.03"
+
+        gas = ct.Solution('gri30.xml')
+        gas.TPX = 300, 1e5, fuel
+        Y_Cf = gas.elemental_mass_fraction("C")
+        Y_Of = gas.elemental_mass_fraction("O")
+        gas.TPX = 300, 1e5, ox
+        Y_Co = gas.elemental_mass_fraction("C")
+        Y_Oo = gas.elemental_mass_fraction("O")
+
+        def test_equil_results(gas, fuel, ox, Y_Cf, Y_Of, Y_Co, Y_Oo, basis):
+            gas.TP = 300, 1e5
+            gas.set_equivalence_ratio(1.3, fuel, ox, basis)
+            T = gas.T
+
+            # set mixture to burnt state to make sure that equivalence ratio and
+            # mixture fraction are independent of reaction progress
+            gas.equilibrate("HP");
+
+            phi = gas.equivalence_ratio(fuel, ox, basis)
+            phi_loc = gas.equivalence_ratio()
+            mf = gas.mixture_fraction(fuel, ox, basis)
+            mf_C = gas.mixture_fraction(fuel, ox, basis, element="C")
+            mf_O = gas.mixture_fraction(fuel, ox, basis, element="O")
+            l = gas.stoich_air_fuel_ratio(fuel, ox, basis)
+
+            gas.set_mixture_fraction(mf, fuel,ox, basis)
+            phi2 = gas.equivalence_ratio(fuel, ox, basis)
+
+            self.assertNear(phi, 1.3)
+            self.assertNear(phi2, 1.3)
+            self.assertNear(phi_loc, 1.1726068608195617)
+            self.assertNear(mf, 0.13415725911057605)
+            self.assertNear(mf_C, (gas.elemental_mass_fraction("C")-Y_Co)/(Y_Cf-Y_Co))
+            self.assertNear(mf_O, (gas.elemental_mass_fraction("O")-Y_Oo)/(Y_Of-Y_Oo))
+            self.assertNear(l, 8.3901204498353561)
+            self.assertNear(gas.P, 1e5)
+            self.assertNear(T, 300.0)
+
+        test_equil_results(gas, fuel, ox, Y_Cf, Y_Of, Y_Co, Y_Oo, 'mole')
+
+        # do the same for mass-based functions
+
+        gas.TPX = None, None, fuel
+        fuel = gas.Y
+        Y_Cf = gas.elemental_mass_fraction("C")
+        Y_Of = gas.elemental_mass_fraction("O")
+        gas.TPX = None, None, ox
+        ox = gas.Y
+        Y_Co = gas.elemental_mass_fraction("C")
+        Y_Oo = gas.elemental_mass_fraction("O")
+
+        test_equil_results(gas, fuel, ox, Y_Cf, Y_Of, Y_Co, Y_Oo, 'mass')
 
     def test_full_report(self):
         report = self.phase.report(threshold=0.0)
@@ -1526,6 +1620,12 @@ class TestSolutionArray(utilities.CanteraTest):
         self.assertEqual(states.reaction_equation(10),
                          self.gas.reaction_equation(10))
 
+    def test_meta(self):
+        meta = {'foo': 'bar', 'spam': 'eggs'}
+        states = ct.SolutionArray(self.gas, 3, meta=meta)
+        self.assertEqual(states.meta['foo'], 'bar')
+        self.assertEqual(states.meta['spam'], 'eggs')
+
     def test_get_state(self):
         states = ct.SolutionArray(self.gas, 4)
         H, P = states.HP
@@ -1640,6 +1740,16 @@ class TestSolutionArray(utilities.CanteraTest):
         states.TP = 900, None
         self.assertArrayNear(col3.T, 900*np.ones(2))
         self.assertArrayNear(row2.T, 900*np.ones(5))
+
+    def test_extra(self):
+        extra = OrderedDict([('grid', np.arange(10)),
+                             ('velocity', np.random.rand(10))])
+        states = ct.SolutionArray(self.gas, 10, extra=extra)
+        keys = list(states._extra.keys())
+        self.assertEqual(keys[0], 'grid')
+
+        with self.assertRaises(ValueError):
+            states = ct.SolutionArray(self.gas, extra=['creation_rates'])
 
     def test_append(self):
         states = ct.SolutionArray(self.gas, 5)
@@ -1765,32 +1875,18 @@ class TestSolutionArray(utilities.CanteraTest):
         self.assertArrayNear(states('OH','O').partial_molar_cp,
                              states.partial_molar_cp[...,kk])
 
-    def test_write_csv(self):
-        states = ct.SolutionArray(self.gas, 7)
-        states.TPX = np.linspace(300, 1000, 7), 2e5, 'H2:0.5, O2:0.4'
-        states.equilibrate('HP')
+    def test_slice_SolutionArray(self):
+        soln = ct.SolutionArray(self.gas, 10)
+        arr = soln[2:9:3]
+        self.assertEqual(len(arr.T), 3)
 
-        outfile = pjoin(self.test_work_dir, 'solutionarray.csv')
-        states.write_csv(outfile)
+    def test_zero_length_slice_SolutionArray(self):
+        states = ct.SolutionArray(self.gas, 4)
+        arr1 = states[3:3]
+        self.assertEqual(len(arr1.T), 0)
+        self.assertEqual(arr1.X.shape, (0,9))
+        self.assertEqual(arr1.n_reactions, 28)
 
-        data = np.genfromtxt(outfile, names=True, delimiter=',')
-        self.assertEqual(len(data), 7)
-        self.assertEqual(len(data.dtype), self.gas.n_species + 2)
-        self.assertIn('Y_H2', data.dtype.fields)
-
-        b = ct.SolutionArray(self.gas)
-        b.read_csv(outfile)
-        self.assertTrue(np.allclose(states.T, b.T))
-        self.assertTrue(np.allclose(states.P, b.P))
-        self.assertTrue(np.allclose(states.X, b.X))
-
-    def test_pandas(self):
-        states = ct.SolutionArray(self.gas, 7)
-        states.TPX = np.linspace(300, 1000, 7), 2e5, 'H2:0.5, O2:0.4'
-        try:
-            # this will run through if pandas is installed
-            df = states.to_pandas()
-            self.assertTrue(df.shape[0]==7)
-        except ImportError as err:
-            # pandas is not installed and correct exception is raised
-            pass
+        states.TP = [100,300,900,323.23], ct.one_atm
+        arr2 = states[slice(0)]
+        self.assertEqual(len(arr2.T), 0)

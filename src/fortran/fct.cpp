@@ -565,10 +565,10 @@ extern "C" {
         return 0;
     }
 
-    status_t th_equil_(const integer* n, char* XY, ftnlen lenxy)
+    status_t th_equil_(const integer* n, char* XY, char* solver, doublereal* rtol, int* max_steps, int* max_iter, int* estimate_equil, int* log_level, ftnlen lenxy, ftnlen lensolver)
     {
         try {
-            _fth(n)->equilibrate(f2string(XY,lenxy));
+            _fth(n)->equilibrate(f2string(XY,lenxy), f2string(solver,lensolver), *rtol, *max_steps, *max_iter, *estimate_equil, *log_level);
         } catch (...) {
             return handleAllExceptions(-1, ERR);
         }
@@ -629,6 +629,17 @@ extern "C" {
         try {
             thermo_t* thrm = _fth(n);
             thrm->getCp_R(cp_r);
+        } catch (...) {
+            return handleAllExceptions(-1, ERR);
+        }
+        return 0;
+    }
+
+    status_t th_getpartialmolarintenergies_r_(const integer* n, doublereal* ie)
+    {
+        try {
+            thermo_t* thrm = _fth(n);
+            thrm->getPartialMolarIntEnergies(ie);
         } catch (...) {
             return handleAllExceptions(-1, ERR);
         }

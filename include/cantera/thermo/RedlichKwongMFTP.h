@@ -25,13 +25,11 @@ public:
     //! Base constructor.
     RedlichKwongMFTP();
 
-    //! Construct and initialize a RedlichKwongMFTP object directly from an
-    //! ASCII input file
+    //! Construct a RedlichKwongMFTP object from an input file
     /*!
-     * @param infile    Name of the input file containing the phase XML data
-     *                  to set up the object
-     * @param id        ID of the phase in the input file. Defaults to the empty
-     *     string.
+     * @param inputFile Name of the input file containing the phase definition
+     * @param id        name (ID) of the phase in the input file. If empty, the
+     *                  first phase definition in the input file will be used.
      */
     RedlichKwongMFTP(const std::string& infile, const std::string& id="");
 
@@ -41,6 +39,9 @@ public:
      *  @param phaseRef XML phase node containing the description of the phase
      *  @param id       id attribute containing the name of the phase.  (default
      *      is the empty string)
+     *
+     * @deprecated The XML input format is deprecated and will be removed in
+     *     Cantera 3.0.
      */
     RedlichKwongMFTP(XML_Node& phaseRef, const std::string& id = "");
 
@@ -175,7 +176,6 @@ public:
 
     virtual bool addSpecies(shared_ptr<Species> spec);
     virtual void setParametersFromXML(const XML_Node& thermoNode);
-    virtual void setToEquilState(const doublereal* lambda_RT);
     virtual void initThermoXML(XML_Node& phaseNode, const std::string& id);
     virtual void initThermo();
 

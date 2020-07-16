@@ -119,6 +119,11 @@ class TestKinetics(utilities.CanteraTest):
         self.assertArrayNear(self.phase.forward_rates_of_progress - self.phase.reverse_rates_of_progress,
                              self.phase.net_rates_of_progress)
 
+    def test_heat_release(self):
+        hrr = - self.phase.partial_molar_enthalpies.dot(self.phase.net_production_rates)
+        self.assertNear(hrr, self.phase.heat_release_rate)
+        self.assertNear(hrr, sum(self.phase.heat_production_rates))
+
     def test_rate_constants(self):
         self.assertEqual(len(self.phase.forward_rate_constants), self.phase.n_reactions)
         self.assertArrayNear(self.phase.forward_rate_constants / self.phase.reverse_rate_constants,
@@ -149,7 +154,7 @@ class TestKinetics(utilities.CanteraTest):
 class KineticsFromReactions(utilities.CanteraTest):
     """
     Test for Kinetics objects which are constructed directly from Reaction
-    objects instead of from CTI/XML files.
+    objects instead of from input files.
     """
     def test_idealgas(self):
         gas1 = ct.Solution('h2o2.xml')
@@ -852,6 +857,27 @@ class TestReaction(utilities.CanteraTest):
         gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
                           species=species, reactions=[r])
 
+    def test_negative_A_falloff(self):
+        species = ct.Species.listFromFile('gri30.yaml')
+        r = ct.FalloffReaction('NH:1, NO:1', 'N2O:1, H:1')
+        r.low_rate = ct.Arrhenius(2.16e13, -0.23, 0)
+        r.high_rate = ct.Arrhenius(-8.16e12, -0.5, 0)
+        self.assertFalse(r.allow_negative_pre_exponential_factor)
+
+        with self.assertRaisesRegex(ct.CanteraError, 'pre-exponential'):
+            gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
+                              species=species, reactions=[r])
+
+        r.allow_negative_pre_exponential_factor = True
+        # Should still fail because of mixed positive and negative A factors
+        with self.assertRaisesRegex(ct.CanteraError, 'pre-exponential'):
+            gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
+                              species=species, reactions=[r])
+
+        r.low_rate = ct.Arrhenius(-2.16e13, -0.23, 0)
+        gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
+                          species=species, reactions=[r])
+        self.assertLess(gas.forward_rate_constants, 0)
 
     def test_threebody(self):
         r = ct.ThreeBodyReaction()

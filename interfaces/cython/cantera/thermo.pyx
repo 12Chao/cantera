@@ -5,10 +5,9 @@ import warnings
 import weakref
 import numbers as _numbers
 
-cdef enum ThermoBasis:
+cdef enum ThermoBasisType:
     mass_basis = 0
     molar_basis = 1
-
 
 cdef class Species:
     """
@@ -82,6 +81,10 @@ cdef class Species:
     def fromCti(text):
         """
         Create a Species object from its CTI string representation.
+
+        .. deprecated:: 2.5
+
+            The CTI input format is deprecated and will be removed in Cantera 3.0.
         """
         cxx_species = CxxGetSpecies(deref(CxxGetXmlFromString(stringify(text))))
         assert cxx_species.size() == 1, cxx_species.size()
@@ -93,6 +96,10 @@ cdef class Species:
     def fromXml(text):
         """
         Create a Species object from its XML string representation.
+
+        .. deprecated:: 2.5
+
+            The XML input format is deprecated and will be removed in Cantera 3.0.
         """
         cxx_species = CxxNewSpecies(deref(CxxGetXmlFromString(stringify(text))))
         species = Species(init=False)
@@ -122,6 +129,11 @@ cdef class Species:
         In the case of an XML file, the ``<species>`` nodes are assumed to be
         children of the ``<speciesData>`` node in a document with a ``<ctml>``
         root node, as in the XML files produced by conversion from CTI files.
+
+        .. deprecated:: 2.5
+
+            The CTI and XML input formats are deprecated and will be removed in
+            Cantera 3.0.
         """
         if filename.lower().split('.')[-1] in ('yml', 'yaml'):
             root = AnyMapFromYamlFile(stringify(filename))
@@ -143,6 +155,10 @@ cdef class Species:
         string. The ``<species>`` nodes are assumed to be children of the
         ``<speciesData>`` node in a document with a ``<ctml>`` root node, as in
         the XML files produced by conversion from CTI files.
+
+        .. deprecated:: 2.5
+
+            The XML input format is deprecated and will be removed in Cantera 3.0.
         """
         cxx_species = CxxGetSpecies(deref(CxxGetXmlFromString(stringify(text))))
         species = []
@@ -157,6 +173,10 @@ cdef class Species:
         """
         Create a list of Species objects from all the species defined in a CTI
         string.
+
+        .. deprecated:: 2.5
+
+            The CTI input format is deprecated and will be removed in Cantera 3.0.
         """
         # Currently identical to listFromXml since get_XML_from_string is able
         # to distinguish between CTI and XML.
@@ -660,6 +680,11 @@ cdef class ThermoPhase(_SolutionBase):
         def __get__(self):
             return self._getArray1(thermo_getMolecularWeights)
 
+    property charges:
+        """Array of species charges [elem. charge]."""
+        def __get__(self):
+            return self._getArray1(thermo_getCharges)
+
     property mean_molecular_weight:
         """The mean molecular weight (molar mass) [kg/kmol]."""
         def __get__(self):
@@ -714,71 +739,91 @@ cdef class ThermoPhase(_SolutionBase):
         def __set__(self, C):
             self._setArray1(thermo_setConcentrations, C)
 
-    def set_equivalence_ratio(self, phi, fuel, oxidizer):
+    def __composition_to_array(self, comp, basis):
+        """take a mixture composition in mole or mass fraction as string,
+        dict or array and return array (for internal use)"""
+        if (isinstance(comp, str) and ':' not in comp
+            and comp in self.species_names):
+            comp += ':1.0'
+
+        original_state = self.state
+
+        if basis == 'mole':
+            self.TPX = None, None, comp
+            arr = np.copy(self.X)
+        elif basis == 'mass':
+            self.TPY = None, None, comp
+            arr = np.copy(self.Y)
+        else:
+            raise ValueError("basis must either be 'mass' or mole'.")
+
+        self.state = original_state
+        return arr
+
+    def set_equivalence_ratio(self, phi, fuel, oxidizer, basis='mole'):
         """
         Set the composition to a mixture of *fuel* and *oxidizer* at the
         specified equivalence ratio *phi*, holding temperature and pressure
         constant. Considers the oxidation of C to CO2, H to H2O and S to SO2.
         Other elements are assumed not to participate in oxidation (i.e. N ends up as
-        N2)::
+        N2). The *basis* determines the fuel and oxidizer compositions:
+        basis='mole' means mole fractions (default), basis='mass' means mass fractions::
 
-            >>> gas.set_equivalence_ratio(0.5, 'CH4', 'O2:1.0, N2:3.76')
-            >>> gas.mole_fraction_dict()
-            {'CH4': 0.049900199, 'N2': 0.750499001, 'O2': 0.199600798}
-
-            >>> gas.set_equivalence_ratio(1.2, {'NH3':0.8, 'CO':0.2}, 'O2:1.0')
-            >>> gas.mole_fraction_dict()
-            {'CO': 0.1263157894, 'NH3': 0.505263157, 'O2': 0.36842105}
+            >>> gas.set_equivalence_ratio(0.5, 'CH4', 'O2:1.0, N2:3.76', basis='mole')
+            >>> gas.mass_fraction_dict()
+            {'CH4': 0.02837633052851681, 'N2': 0.7452356312613029, 'O2': 0.22638803821018036}
+            >>> gas.set_equivalence_ratio(1.2, {'NH3':0.8, 'CO':0.2}, 'O2:1.0', basis='mole')
+            >>> gas.mass_fraction_dict()
+            {'CO': 0.14784006249290754, 'NH3': 0.35956645545401045, 'O2': 0.49259348205308207}
 
         :param phi: Equivalence ratio
         :param fuel:
-            Fuel species name or molar composition as string, array, or dict.
+            Fuel species name or mole/mass fractions as string, array, or dict.
         :param oxidizer:
-            Oxidizer species name or molar composition as a string, array, or
+            Oxidizer species name or mole/mass fractions as a string, array, or
             dict.
+        :param basis: determines if *fuel* and *oxidizer* are given in mole
+            fractions (basis='mole') or mass fractions (basis='mass')
         """
-        if (isinstance(fuel, str) and ':' not in fuel
-            and fuel in self.species_names):
-            fuel += ':1.0'
+        cdef np.ndarray[np.double_t, ndim=1] f = \
+                np.ascontiguousarray(self.__composition_to_array(fuel, basis), dtype=np.double)
+        cdef np.ndarray[np.double_t, ndim=1] o = \
+                np.ascontiguousarray(self.__composition_to_array(oxidizer, basis), dtype=np.double)
 
-        if (isinstance(oxidizer, str) and ':' not in oxidizer
-            and oxidizer in self.species_names):
-            oxidizer += ':1.0'
+        self.thermo.setEquivalenceRatio(phi, &f[0], &o[0], ThermoBasis.mass if basis=='mass' else ThermoBasis.molar)
 
-        self.TPX = None, None, fuel
-        Xf = self.X
-        self.TPX = None, None, oxidizer
-        Xo = self.X
+    def set_mixture_fraction(self, mixFrac, fuel, oxidizer, basis='mole'):
+        """
+        Set the composition to a mixture of *fuel* and *oxidizer* at the
+        specified mixture fraction *mixFrac* (kg fuel / kg mixture), holding
+        temperature and pressure constant. Considers the oxidation of C to CO2,
+        H to H2O and S to SO2. Other elements are assumed not to participate in
+        oxidation (i.e. N ends up as N2). The *basis* determines the composition
+        of fuel and oxidizer: basis='mole' (default) means mole fractions,
+        basis='mass' means mass fractions::
 
-        nO = np.array([self.n_atoms(k, 'O') for k in range(self.n_species)])
+            >>> gas.set_mixture_fraction(0.5, 'CH4', 'O2:1.0, N2:3.76')
+            >>> gas.mass_fraction_dict()
+            {'CH4': 0.5, 'N2': 0.38350014242997776, 'O2': 0.11649985757002226}
+            >>> gas.set_mixture_fraction(0.5, {'NH3':0.8, 'CO':0.2}, 'O2:1.0')
+            >>> gas.mass_fraction_dict()
+            {'CO': 0.145682068778996, 'NH3': 0.354317931221004, 'O2': 0.5}
 
-        if 'C' in self.element_names:
-            nC = np.array([self.n_atoms(k, 'C') for k in range(self.n_species)])
-        else:
-            nC = np.zeros(self.n_species)
+        :param mixFrac: Mixture fraction (kg fuel / kg mixture)
+        :param fuel:
+            Fuel species name or mole/mass fractions as string, array, or dict.
+        :param oxidizer:
+            Oxidizer species name or mole/mass fractions as a string, array, or
+            dict.
+        :param basis: determines if *fuel* and *oxidizer* are given in mole
+            fractions (basis='mole') or mass fractions (basis='mass')
+        """
+        cdef np.ndarray[np.double_t, ndim=1] f = \
+                np.ascontiguousarray(self.__composition_to_array(fuel, basis), dtype=np.double)
+        cdef np.ndarray[np.double_t, ndim=1] o = \
+                np.ascontiguousarray(self.__composition_to_array(oxidizer, basis), dtype=np.double)
 
-        if 'H' in self.element_names:
-            nH = np.array([self.n_atoms(k, 'H') for k in range(self.n_species)])
-        else:
-            nH = np.zeros(self.n_species)
-
-        if 'S' in self.element_names:
-            nS = np.array([self.n_atoms(k, 'S') for k in range(self.n_species)])
-        else:
-            nS = np.zeros(self.n_species)
-
-        Cf = nC.dot(Xf)
-        Co = nC.dot(Xo)
-        Of = nO.dot(Xf)
-        Oo = nO.dot(Xo)
-        Hf = nH.dot(Xf)
-        Ho = nH.dot(Xo)
-        Sf = nS.dot(Xf)
-        So = nS.dot(Xo)
-
-        stoichAirFuelRatio = - (Of - 2*Cf - 2*Sf - Hf/2.0) / (Oo - 2*Co - 2*So - Ho/2.0)
-        Xr = phi * Xf + stoichAirFuelRatio * Xo
-        self.TPX = None, None, Xr
+        self.thermo.setMixtureFraction(mixFrac, &f[0], &o[0], ThermoBasis.mass if basis=='mass' else ThermoBasis.molar)
 
     def get_equivalence_ratio(self, oxidizers=[], ignore=[]):
         """
@@ -795,15 +840,23 @@ cdef class ThermoPhase(_SolutionBase):
         :param ignore:
             List of species names as strings to ignore.
 
-        >>> gas.set_equivalence_ratio(0.5, 'CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
-        >>> gas.get_equivalence_ratio()
-        0.50000000000000011
-        >>> gas.get_equivalence_ratio(['O2'])  # Only consider O2 as the oxidizer instead of O2 and NO
-        0.48809523809523814
-        >>> gas.X = 'CH4:1, O2:2, NO:0.1'
-        >>> gas.get_equivalence_ratio(ignore=['NO'])
-        1.0
+            >>> gas.set_equivalence_ratio(0.5, 'CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            >>> gas.get_equivalence_ratio()
+            0.5
+            >>> gas.get_equivalence_ratio(['O2'])  # Only consider O2 as the oxidizer instead of O2 and NO
+            0.488095238095
+            >>> gas.X = 'CH4:1, O2:2, NO:0.1'
+            >>> gas.get_equivalence_ratio(ignore=['NO'])
+            1.0
+
+        .. deprecated:: 2.5
+
+            To be deprecated with version 2.5, and removed thereafter.
+            Replaced by function `equivalence_ratio`.
         """
+        warnings.warn("To be removed after Cantera 2.5. "
+                      "Replaced by function 'equivalence_ratio'.", DeprecationWarning)
+
         if not oxidizers:
             # Default behavior, find all possible oxidizers
             oxidizers = []
@@ -830,6 +883,106 @@ cdef class ThermoPhase(_SolutionBase):
             return float('inf')
         else:
             return alpha / mol_O
+
+
+    def equivalence_ratio(self, fuel=None, oxidizer=None, basis='mole'):
+        """
+        Get the equivalence ratio of the current mixture, which is a
+	conserved quantity. Considers the oxidation of C to CO2, H to H2O
+        and S to SO2. Other elements are assumed not to participate in oxidation
+        (i.e. N ends up as N2). If fuel and oxidizer are not specified, the
+        equivalence ratio is computed from the available oxygen and the
+        required oxygen for complete oxidation. The *basis* determines the
+        composition of fuel and oxidizer: basis='mole' (default) means mole
+        fractions, basis='mass' means mass fractions::
+       :param fuel:
+            Fuel species name or mole/,mass fractions as string, array, or dict
+        :param oxidizer:
+            Oxidizer species name or mole/mass fractions as a string, array, or dict.
+        :param basis:
+            Determines if *fuel* and *oxidizer* are given in mole fractions (basis='mole')
+            or mass fractions (basis='mass')
+
+            >>> gas.set_equivalence_ratio(0.5, 'CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            >>> gas.equivalence_ratio('CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            0.5
+        """
+        if fuel is None and oxidizer is None:
+            return self.thermo.equivalenceRatio()
+
+        cdef np.ndarray[np.double_t, ndim=1] f = \
+                np.ascontiguousarray(self.__composition_to_array(fuel, basis), dtype=np.double)
+        cdef np.ndarray[np.double_t, ndim=1] o = \
+                np.ascontiguousarray(self.__composition_to_array(oxidizer, basis), dtype=np.double)
+
+        return self.thermo.equivalenceRatio(&f[0], &o[0], ThermoBasis.mass if basis=='mass' else ThermoBasis.molar)
+
+
+    def mixture_fraction(self, fuel, oxidizer, basis='mole', element="Bilger"):
+        """
+        Get the mixture fraction of the current mixture (kg fuel / (kg oxidizer + kg fuel))
+        This is a quantity that is conserved after oxidation. Considers the
+        oxidation of C to CO2, H to H2O and S to SO2. Other elements are assumed
+        not to participate in oxidation (i.e. N ends up as N2).
+        The *basis* determines the composition of fuel and oxidizer:
+        basis='mole' (default) means mole fractions, basis='mass' means mass fractions.
+        The mixture fraction can be computed from a single element (e.g. carbon
+        with element="C") or from all elements, which is the Bilger mixture
+        fraction (element="Bilger") and the default::
+
+        :param fuel:
+            Fuel species name or mole/mass fractions as string, array, or dict.
+        :param oxidizer:
+            Oxidizer species name or mole/mass fractions as a string, array, or
+            dict.
+        :param basis: determines if *fuel* and *oxidizer* are given in mole
+            fractions (basis='mole') or mass fractions (basis='mass')
+        :param element: computes the mixture fraction from the specified elemental
+            mass fraction (given by element name or element index) or as
+            the Bilger mixture fraction (default)
+
+            >>> gas.set_mixture_fraction(0.5, 'CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            >>> gas.mixture_fraction('CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            0.5
+        """
+        cdef np.ndarray[np.double_t, ndim=1] f = \
+                np.ascontiguousarray(self.__composition_to_array(fuel, basis), dtype=np.double)
+        cdef np.ndarray[np.double_t, ndim=1] o = \
+                np.ascontiguousarray(self.__composition_to_array(oxidizer, basis), dtype=np.double)
+
+        if isinstance(element, (str, bytes)):
+            e_name = element
+        else:
+            e_name = self.element_name(self.element_index(element))
+
+        return self.thermo.mixtureFraction(&f[0], &o[0], ThermoBasis.mass if basis=='mass' else ThermoBasis.molar, stringify(e_name))
+
+    def stoich_air_fuel_ratio(self, fuel, oxidizer, basis='mole'):
+        """
+        Get the stoichiometric air to fuel ratio (kg oxidizer / kg fuel). Considers the
+        oxidation of C to CO2, H to H2O and S to SO2. Other elements are assumed
+        not to participate in oxidation (i.e. N ends up as N2).
+        The *basis* determines the composition of fuel and oxidizer: basis='mole' (default)
+        means mole fractions, basis='mass' means mass fractions::
+
+        :param fuel:
+            Fuel species name or mole/mass fractions as string, array, or dict.
+        :param oxidizer:
+            Oxidizer species name or mole/mass fractions as a string, array, or
+            dict.
+        :param basis: determines if *fuel* and *oxidizer* are given in mole
+            fractions (basis='mole') or mass fractions (basis='mass')
+
+            >>> gas.set_mixture_fraction(0.5, 'CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            >>> gas.stoich_air_fuel_ratio('CH3:0.5, CH3OH:.5, N2:0.125', 'O2:0.21, N2:0.79, NO:0.01')
+            8.148040722239438
+        """
+        cdef np.ndarray[np.double_t, ndim=1] f = \
+                np.ascontiguousarray(self.__composition_to_array(fuel, basis), dtype=np.double)
+        cdef np.ndarray[np.double_t, ndim=1] o = \
+                np.ascontiguousarray(self.__composition_to_array(oxidizer, basis), dtype=np.double)
+
+        return self.thermo.stoichAirFuelRatio(&f[0], &o[0], ThermoBasis.mass if basis=='mass' else ThermoBasis.molar)
 
     def elemental_mass_fraction(self, m):
         r"""

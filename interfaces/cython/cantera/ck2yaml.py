@@ -61,6 +61,14 @@ except ImportError:
 
 BlockMap = yaml.comments.CommentedMap
 
+logger = logging.getLogger(__name__)
+loghandler = logging.StreamHandler(sys.stdout)
+logformatter = logging.Formatter('%(message)s')
+loghandler.setFormatter(logformatter)
+logger.handlers.clear()
+logger.addHandler(loghandler)
+logger.setLevel(logging.INFO)
+
 def FlowMap(*args, **kwargs):
     m = yaml.comments.CommentedMap(*args, **kwargs)
     m.fa.set_flow_style()
@@ -757,7 +765,7 @@ class Parser:
         if self.warning_as_error:
             raise InputError(message)
         else:
-            logging.warning(message)
+            logger.warning(message)
 
     @staticmethod
     def parse_composition(elements, nElements, width):
@@ -1051,29 +1059,30 @@ class Parser:
                             parser=self)
 
         def parse_expression(expression, dest):
-            falloff3b = None
+            third_body_name = None
             third_body = False  # simple third body reaction (non-falloff)
             photon = False
             for stoichiometry, species, kind in expression:
                 if kind == 'third-body':
                     third_body = True
+                    third_body_name = 'M'
                 elif kind == 'falloff3b':
-                    falloff3b = 'M'
+                    third_body_name = 'M'
                 elif kind.startswith('falloff3b:'):
-                    falloff3b = kind.split()[1]
+                    third_body_name = kind.split()[1]
                 elif kind == 'photon':
                     photon = True
                 else:
                     dest.append((stoichiometry, self.species_dict[species]))
 
-            return falloff3b, third_body, photon
+            return third_body_name, third_body, photon
 
-        falloff_3b_r, third_body, photon_r = parse_expression(reactants, reaction.reactants)
-        falloff_3b_p, third_body, photon_p = parse_expression(products, reaction.products)
+        third_body_name_r, third_body, photon_r = parse_expression(reactants, reaction.reactants)
+        third_body_name_p, third_body, photon_p = parse_expression(products, reaction.products)
 
-        if falloff_3b_r != falloff_3b_p:
+        if third_body_name_r != third_body_name_p:
             raise InputError('Third bodies do not match: "{}" and "{}" in'
-                ' reaction entry:\n\n{}', falloff_3b_r, falloff_3b_p, entry)
+                ' reaction entry:\n\n{}', third_body_name_r, third_body_name_p, entry)
 
         if photon_r:
             raise InputError('Reactant photon not supported. '
@@ -1085,7 +1094,7 @@ class Parser:
                 'removed.'.format(entry.strip()))
             reaction.reversible = False
 
-        reaction.third_body = falloff_3b_r
+        reaction.third_body = third_body_name_r
 
         # Determine the appropriate units for k(T) and k(T,P) based on the number of reactants
         # This assumes elementary kinetics for all reactions
@@ -1281,8 +1290,8 @@ class Parser:
         tests = [cheb_coeffs, pdep_arrhenius, low_rate, high_rate, third_body,
                  surface]
         if sum(bool(t) for t in tests) > 1:
-            raise InputError('Reaction entry contains parameters for more than '
-                'one reaction type.')
+            raise InputError('Reaction {} contains parameters for more than '
+                'one reaction type.', original_reaction)
 
         if cheb_coeffs:
             if Tmin is None or Tmax is None:
@@ -1396,7 +1405,8 @@ class Parser:
                 tokens = line.split() or ['']
                 if inHeader and not line.strip():
                     header.append(comment.rstrip())
-                    indent = min(indent, re.search('[^ ]', comment).start())
+                    if comment.strip() != '': # skip indent calculation if empty
+                        indent = min(indent, re.search('[^ ]', comment).start())
 
                 if tokens[0].upper().startswith('ELEM'):
                     inHeader = False
@@ -1560,7 +1570,7 @@ class Parser:
                             entry = []
                             if label not in self.species_dict:
                                 if skip_undeclared_species:
-                                    logging.info('Skipping unexpected species "{0}" while reading thermodynamics entry.'.format(label))
+                                    logger.info('Skipping unexpected species "{0}" while reading thermodynamics entry.'.format(label))
                                     continue
                                 else:
                                     # Add a new species entry
@@ -1610,7 +1620,7 @@ class Parser:
                                 except Exception as e:
                                     error_line_number = self.line_number - len(current) + 1
                                     error_entry = ''.join(current).rstrip()
-                                    logging.info(
+                                    logger.info(
                                         'Error while reading thermo entry starting on line {0}:\n'
                                         '"""\n{1}\n"""'.format(error_line_number, error_entry)
                                     )
@@ -1618,7 +1628,9 @@ class Parser:
 
                                 if label not in self.species_dict:
                                     if skip_undeclared_species:
-                                        logging.info('Skipping unexpected species "{0}" while reading thermodynamics entry.'.format(label))
+                                        logger.info(
+                                            'Skipping unexpected species "{0}" while'
+                                            ' reading thermodynamics entry.'.format(label))
                                         thermo = []
                                         line, comment = readline()
                                         current = []
@@ -1738,7 +1750,7 @@ class Parser:
                             reaction, revReaction = self.read_kinetics_entry(kinetics, surface)
                         except Exception as e:
                             self.line_number = line_number
-                            logging.info('Error reading reaction starting on '
+                            logger.info('Error reading reaction starting on '
                                 'line {0}:\n"""\n{1}\n"""'.format(
                                     line_number, kinetics.rstrip()))
                             raise
@@ -1781,44 +1793,11 @@ class Parser:
         for h in header:
             self.header_lines.append(h[indent:])
 
-        self.check_duplicate_reactions()
-
         for index, reaction in enumerate(self.reactions):
             reaction.index = index + 1
 
         if transportLines:
             self.parse_transport_data(transportLines, path, transport_start_line)
-
-    def check_duplicate_reactions(self):
-        """
-        Check for marked (and unmarked!) duplicate reactions. Raise exception
-        for unmarked duplicate reactions.
-
-        Pressure-independent and pressure-dependent reactions are treated as
-        different, so they don't need to be marked as duplicate.
-        """
-        possible_duplicates = defaultdict(list)
-        for r in self.reactions:
-            k = (tuple(r.reactants), tuple(r.products), r.kinetics.pressure_dependent)
-            possible_duplicates[k].append(r)
-
-        for reactions in possible_duplicates.values():
-            for r1,r2 in itertools.combinations(reactions, 2):
-                if r1.duplicate and r2.duplicate:
-                    pass  # marked duplicate reaction
-                elif (r1.third_body.upper() == 'M' and
-                      r1.kinetics.efficiencies.get(r2.third_body) == 0):
-                    pass  # explicit zero efficiency
-                elif (r2.third_body.upper() == 'M' and
-                      r2.kinetics.efficiencies.get(r1.third_body) == 0):
-                    pass  # explicit zero efficiency
-                elif r1.third_body != r2.third_body:
-                    pass  # distinct third bodies
-                else:
-                    raise InputError(
-                        'Encountered unmarked duplicate reaction {} '
-                        '(See lines {} and {} of the input file.).',
-                        r1, r1.line_number, r2.line_number)
 
     def parse_transport_data(self, lines, filename, line_offset):
         """
@@ -2001,9 +1980,9 @@ class Parser:
 
         parser = Parser()
         if quiet:
-            logging.basicConfig(level=logging.ERROR)
+            logger.setLevel(level=logging.ERROR)
         else:
-            logging.basicConfig(level=logging.INFO)
+            logger.setLevel(level=logging.INFO)
 
         if permissive is not None:
             parser.warning_as_error = not permissive
@@ -2017,7 +1996,7 @@ class Parser:
                 # Read input mechanism files
                 parser.load_chemkin_file(input_file)
             except Exception as err:
-                logging.warning("\nERROR: Unable to parse '{0}' near line {1}:\n{2}\n".format(
+                logger.warning("\nERROR: Unable to parse '{0}' near line {1}:\n{2}\n".format(
                                 input_file, parser.line_number, err))
                 raise
         else:
@@ -2032,8 +2011,8 @@ class Parser:
                 parser.load_chemkin_file(thermo_file,
                                        skip_undeclared_species=bool(input_file))
             except Exception:
-                logging.warning("\nERROR: Unable to parse '{0}' near line {1}:\n".format(
-                                thermo_file, parser.line_number))
+                logger.warning("\nERROR: Unable to parse '{0}' near line {1}:\n".format(
+                               thermo_file, parser.line_number))
                 raise
 
         if transport_file:
@@ -2059,8 +2038,8 @@ class Parser:
                 # Read input mechanism files
                 parser.load_chemkin_file(surface_file, surface=True)
             except Exception as err:
-                logging.warning("\nERROR: Unable to parse '{0}' near line {1}:\n{2}\n".format(
-                                surface_file, parser.line_number, err))
+                logger.warning("\nERROR: Unable to parse '{0}' near line {1}:\n{2}\n".format(
+                               surface_file, parser.line_number, err))
                 raise
 
         if extra_file:
@@ -2072,8 +2051,8 @@ class Parser:
                 # Read input mechanism files
                 parser.load_extra_file(extra_file)
             except Exception as err:
-                logging.warning("\nERROR: Unable to parse '{0}':\n{1}\n".format(
-                                extra_file, err))
+                logger.warning("\nERROR: Unable to parse '{0}':\n{1}\n".format(
+                               extra_file, err))
                 raise
 
         if out_name:
@@ -2085,16 +2064,43 @@ class Parser:
         surface_names = parser.write_yaml(name=phase_name, out_name=out_name)
         if not quiet:
             nReactions = len(parser.reactions) + sum(len(surf.reactions) for surf in parser.surfaces)
-            print('Wrote YAML mechanism file to {0!r}.'.format(out_name))
-            print('Mechanism contains {0} species and {1} reactions.'.format(len(parser.species_list), nReactions))
-        return surface_names
+            logger.info('Wrote YAML mechanism file to {0!r}.'.format(out_name))
+            logger.info('Mechanism contains {0} species and {1} reactions.'.format(
+                        len(parser.species_list), nReactions))
+        return parser, surface_names
+
+    def show_duplicate_reactions(self, error_message):
+        # Find the reaction numbers of the duplicate reactions by looking at
+        # the YAML file lines shown in the error message generated by
+        # Kinetics::checkDuplicates.
+        reactions = []
+        for line in error_message.split('\n'):
+            match = re.match('>.*# Reaction ([0-9]+)', line)
+            if match:
+                reactions.append(int(match.group(1))-1)
+
+        if len(reactions) != 2:
+            # Something went wrong while parsing the error message, so just
+            # display it as-is instead of trying to be clever.
+            logger.warning(error_message)
+            return
+
+        # Give an error message that references the line numbers in the
+        # original input file.
+        equation = str(self.reactions[reactions[0]])
+        lines = [self.reactions[i].line_number for i in reactions]
+        logger.warning('Undeclared duplicate reaction {}\nfound on lines {} and {} of '
+              'the kinetics input file.'.format(equation, lines[0], lines[1]))
 
 
 def convert_mech(input_file, thermo_file=None, transport_file=None,
                  surface_file=None, phase_name='gas', extra_file=None,
                  out_name=None, quiet=False, permissive=None):
-    return Parser.convert_mech(input_file, thermo_file, transport_file, surface_file,
-                               phase_name, extra_file, out_name, quiet, permissive)
+    _, surface_names = Parser.convert_mech(
+        input_file, thermo_file, transport_file, surface_file, phase_name,
+        extra_file, out_name, quiet, permissive)
+    return surface_names
+
 
 def main(argv):
 
@@ -2113,13 +2119,13 @@ def main(argv):
                                      repr(' '.join(args)))
 
     except getopt.GetoptError as e:
-        print('ck2yaml.py: Error parsing arguments:')
-        print(e)
-        print('Run "ck2yaml.py --help" to see usage help.')
+        logger.error('ck2yaml.py: Error parsing arguments:')
+        logger.error(e)
+        logger.error('Run "ck2yaml.py --help" to see usage help.')
         sys.exit(1)
 
     if not options or '-h' in options or '--help' in options:
-        print(__doc__)
+        logger.info(__doc__)
         sys.exit(0)
 
     input_file = options.get('--input')
@@ -2131,14 +2137,14 @@ def main(argv):
 
     if '--id' in options:
         phase_name = options.get('--id', 'gas')
-        logging.warning("\nFutureWarning: "
-                        "Option '--id=...' will be replaced by '--name=...'")
+        logger.warning("\nFutureWarning: "
+                       "Option '--id=...' will be replaced by '--name=...'")
     else:
         phase_name = options.get('--name', 'gas')
 
     if not input_file and not thermo_file:
-        print('At least one of the arguments "--input=..." or "--thermo=..."'
-              ' must be provided.\nRun "ck2yaml.py --help" to see usage help.')
+        logger.error('At least one of the arguments "--input=..." or "--thermo=..."'
+                     ' must be provided.\nRun "ck2yaml.py --help" to see usage help.')
         sys.exit(1)
 
     extra_file = options.get('--extra')
@@ -2152,9 +2158,9 @@ def main(argv):
     else:
         out_name = os.path.splitext(thermo_file)[0] + '.yaml'
 
-    surfaces = Parser.convert_mech(input_file, thermo_file, transport_file,
-                                   surface_file, phase_name, extra_file,
-                                   out_name, quiet, permissive)
+    parser, surfaces = Parser.convert_mech(input_file, thermo_file,
+            transport_file, surface_file, phase_name, extra_file, out_name,
+            quiet, permissive)
 
     # Do full validation by importing the resulting mechanism
     if not input_file:
@@ -2167,19 +2173,23 @@ def main(argv):
     try:
         import cantera as ct
     except ImportError:
-        print('WARNING: Unable to import Cantera Python module. Output '
-              'mechanism has not been validated')
+        logger.warning('WARNING: Unable to import Cantera Python module. '
+                        'Output mechanism has not been validated')
         sys.exit(0)
 
     try:
-        print('Validating mechanism...', end='')
+        logger.info('Validating mechanism...')
         gas = ct.Solution(out_name)
         for surf_name in surfaces:
             phase = ct.Interface(out_name, surf_name, [gas])
-        print('PASSED.')
+        logger.info('PASSED')
     except RuntimeError as e:
-        print('FAILED.')
-        print(e)
+        logger.info('FAILED')
+        msg = str(e)
+        if 'Undeclared duplicate reactions' in msg:
+            parser.show_duplicate_reactions(msg)
+        else:
+            logger.warning(e)
         sys.exit(1)
 
 

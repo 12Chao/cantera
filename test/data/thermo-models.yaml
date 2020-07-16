@@ -15,6 +15,7 @@ phases:
   transport: water
   species: [H2O(l)]
 
+# @todo Remove after Cantera 2.5 - class FixedChemPotSSTP is deprecated
 - name: Li-fixed
   thermo: fixed-chemical-potential
   species: [Li]
@@ -93,6 +94,8 @@ phases:
   species: [KCl(l)]
   thermo: Margules
 
+# todo: Remove after Cantera 2.5 - the "gas" moode of class IdealSolnGasVPSS is
+# deprecated.
 - name: IdealSolnGas-gas
   thermo: ideal-gas-VPSS
   species: [{gas-species: [H2O, H2, O2]}]

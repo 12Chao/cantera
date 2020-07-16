@@ -245,6 +245,9 @@ struct convert<Cantera::AnyValue> {
         } else if (node.IsMap()) {
             target = node.as<AnyMap>();
             return true;
+        } else if (node.IsNull()) {
+            target = Empty;
+            return true;
         }
         return false;
     }
@@ -265,12 +268,32 @@ std::map<std::string, std::string> AnyValue::s_typenames = {
 
 std::unordered_map<std::string, std::pair<AnyMap, int>> AnyMap::s_cache;
 
+// Methods of class AnyBase
+
+AnyBase::AnyBase()
+    : m_line(-1)
+    , m_column(-1)
+{}
+
+void AnyBase::setLoc(int line, int column)
+{
+    m_line = line;
+    m_column = column;
+}
+
+const AnyValue& AnyBase::getMetadata(const std::string& key) const
+{
+    if (m_metadata && m_metadata->hasKey(key)) {
+        return m_metadata->at(key);
+    } else {
+        return Empty;
+    }
+}
+
 // Methods of class AnyValue
 
 AnyValue::AnyValue()
-  : m_line(-1)
-  , m_column(-1)
-  , m_key()
+  : m_key()
   , m_value(new boost::any{})
   , m_equals(eq_comparer<size_t>)
 {}
@@ -278,9 +301,7 @@ AnyValue::AnyValue()
 AnyValue::~AnyValue() = default;
 
 AnyValue::AnyValue(AnyValue const& other)
-    : m_line(other.m_line)
-    , m_column(other.m_column)
-    , m_metadata(other.m_metadata)
+    : AnyBase(other)
     , m_key(other.m_key)
     , m_value(new boost::any{*other.m_value})
     , m_equals(other.m_equals)
@@ -288,9 +309,7 @@ AnyValue::AnyValue(AnyValue const& other)
 }
 
 AnyValue::AnyValue(AnyValue&& other)
-    : m_line(other.m_line)
-    , m_column(other.m_column)
-    , m_metadata(std::move(other.m_metadata))
+    : AnyBase(std::move(other))
     , m_key(std::move(other.m_key))
     , m_value(std::move(other.m_value))
     , m_equals(std::move(other.m_equals))
@@ -298,11 +317,10 @@ AnyValue::AnyValue(AnyValue&& other)
 }
 
 AnyValue& AnyValue::operator=(AnyValue const& other) {
-    if (this == &other)
+    if (this == &other) {
         return *this;
-    m_line = other.m_line;
-    m_column = other.m_column;
-    m_metadata = other.m_metadata;
+    }
+    AnyBase::operator=(*this);
     m_key = other.m_key;
     m_value.reset(new boost::any{*other.m_value});
     m_equals = other.m_equals;
@@ -310,11 +328,10 @@ AnyValue& AnyValue::operator=(AnyValue const& other) {
 }
 
 AnyValue& AnyValue::operator=(AnyValue&& other) {
-    if (this == &other)
+    if (this == &other) {
         return *this;
-    m_line = other.m_line;
-    m_column = other.m_column;
-    m_metadata = std::move(other.m_metadata);
+    }
+    AnyBase::operator=(std::move(other));
     m_key = std::move(other.m_key);
     m_value = std::move(other.m_value);
     m_equals = std::move(other.m_equals);
@@ -349,21 +366,6 @@ void AnyValue::setKey(const std::string &key) { m_key = key; }
 
 const std::type_info &AnyValue::type() const {
     return m_value->type();
-}
-
-void AnyValue::setLoc(int line, int column)
-{
-    m_line = line;
-    m_column = column;
-}
-
-const AnyValue& AnyValue::getMetadata(const std::string& key) const
-{
-    if (m_metadata && m_metadata->hasKey(key)) {
-        return m_metadata->at(key);
-    } else {
-        return Empty;
-    }
 }
 
 void AnyValue::propagateMetadata(shared_ptr<AnyMap>& metadata)
@@ -656,6 +658,9 @@ const AnyMap& AnyValue::getMapWhere(const std::string& key, const std::string& v
             throw InputFileError("AnyValue::getMapWhere", *this,
                 "Map does not contain a key where '{}' = '{}'", key, value);
         }
+    } else if (is<void>()) {
+        throw InputFileError("AnyValue::getMapWhere", *this,
+            "Key '{}' not found", m_key);
     } else {
         throw InputFileError("AnyValue::getMapWhere", *this,
             "Element is not a mapping or list of mappings");
@@ -703,6 +708,9 @@ AnyMap& AnyValue::getMapWhere(const std::string& key, const std::string& value,
         child[key] = value;
         operator=(std::move(child));
         return as<AnyMap>();
+    } else if (is<void>()) {
+        throw InputFileError("AnyValue::getMapWhere", *this,
+            "Key '{}' not found", m_key);
     } else {
         throw InputFileError("AnyValue::getMapWhere", *this,
             "Element is not a mapping or list of mappings");
@@ -998,21 +1006,6 @@ std::string AnyMap::keys_str() const
     return to_string(b);
 }
 
-void AnyMap::setLoc(int line, int column)
-{
-    m_line = line;
-    m_column = column;
-}
-
-const AnyValue& AnyMap::getMetadata(const std::string& key) const
-{
-    if (m_metadata && m_metadata->hasKey(key)) {
-        return m_metadata->at(key);
-    } else {
-        return Empty;
-    }
-}
-
 void AnyMap::propagateMetadata(shared_ptr<AnyMap>& metadata)
 {
     m_metadata = metadata;
@@ -1222,23 +1215,15 @@ AnyMap::Iterator end(const AnyValue& v) {
     return v.as<AnyMap>().end();
 }
 
-std::string InputFileError::formatError(const std::string& message,
-                                        int lineno, int column,
-                                        const shared_ptr<AnyMap>& metadata)
+namespace {
+void formatInputFile(fmt::memory_buffer& b, const shared_ptr<AnyMap>& metadata,
+        const std::string& filename, int lineno, int column, int lineno2=-1, int column2=-1)
 {
-    if (!metadata) {
-        return message;
+    if (lineno2 == -1) {
+        lineno2 = lineno;
+        column2 = column;
     }
-    std::string filename = metadata->getString("filename", "");
 
-    fmt::memory_buffer b;
-    format_to(b, "Error on line {} of", lineno+1);
-    if (filename.empty()) {
-        format_to(b, " input string:\n");
-    } else {
-        format_to(b, " {}:\n", filename);
-    }
-    format_to(b, "{}\n", message);
     format_to(b, "|  Line |\n");
     if (!metadata->hasKey("file-contents")) {
         std::ifstream infile(findInputFile(filename));
@@ -1248,16 +1233,68 @@ std::string InputFileError::formatError(const std::string& message,
     }
     std::string line;
     int i = 0;
+    int lastShown = -1;
     std::stringstream contents((*metadata)["file-contents"].asString());
     while (std::getline(contents, line)) {
-        if (lineno == i) {
+        if (i == lineno || i == lineno2) {
             format_to(b, "> {: 5d} > {}\n", i+1, line);
             format_to(b, "{:>{}}\n", "^", column + 11);
-        } else if (lineno + 4 > i && lineno < i + 6) {
+            lastShown = i;
+        } else if ((lineno + 4 > i && lineno < i + 6) ||
+                   (lineno2 + 4 > i && lineno2 < i + 6)) {
+            if (lastShown >= 0 && i - lastShown > 1) {
+                format_to(b, "...\n");
+            }
             format_to(b, "| {: 5d} | {}\n", i+1, line);
+            lastShown = i;
         }
         i++;
     }
+}
+}
+
+std::string InputFileError::formatError(const std::string& message,
+                                        int lineno, int column,
+                                        const shared_ptr<AnyMap>& metadata)
+{
+    if (!metadata) {
+        return message;
+    }
+    std::string filename = metadata->getString("filename", "input string");
+
+    fmt::memory_buffer b;
+    format_to(b, "Error on line {} of {}:\n{}\n", lineno+1, filename, message);
+    formatInputFile(b, metadata, filename, lineno, column);
+    return to_string(b);
+}
+
+std::string InputFileError::formatError2(const std::string& message,
+                                         int line1, int column1,
+                                         const shared_ptr<AnyMap>& metadata1,
+                                         int line2, int column2,
+                                         const shared_ptr<AnyMap>& metadata2)
+{
+    if (!metadata1 || !metadata2) {
+        return message;
+    }
+    std::string filename1 = metadata1->getString("filename", "input string");
+    std::string filename2 = metadata2->getString("filename", "input string");
+
+    fmt::memory_buffer b;
+    if (filename1 == filename2) {
+        format_to(b, "Error on lines {} and {} of {}:\n",
+                  std::min(line1, line2) + 1, std::max(line1, line2) + 1,
+                  filename1);
+        format_to(b, "{}\n", message);
+        formatInputFile(b, metadata1, filename1, line1, column1, line2, column2);
+    } else {
+        format_to(b, "Error on line {} of {} and line {} of {}:\n{}\n",
+                  line1+1, filename1, line2+1, filename2, message);
+        formatInputFile(b, metadata1, filename1, line1, column1);
+        format_to(b, "\n");
+        formatInputFile(b, metadata2, filename2, line2, column2);
+    }
+
     return to_string(b);
 }
 
