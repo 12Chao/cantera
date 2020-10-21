@@ -68,6 +68,12 @@ cdef class Kinetics(_SolutionBase):
         if not 0 <= n < self.n_total_species:
             raise ValueError("Kinetics Species index ({0}) out of range".format(n))
 
+    def add_activation_energy(self, n, Ea):
+        self.kinetics.add_E(n, Ea)
+
+    def get_activation_energy(self, i):
+        return self.kinetics.check_Es(i)
+
     def kinetics_species_index(self, species, int phase=0):
         """
         The index of species *species* of phase *phase* within arrays returned

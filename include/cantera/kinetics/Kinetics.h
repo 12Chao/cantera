@@ -818,6 +818,12 @@ public:
     virtual void setRoot(std::shared_ptr<Solution> root) {
         m_root = root;
     }
+    
+    // add activation energy
+    virtual double add_E(size_t i, double Ea);
+
+    //check members in for m_bmE
+    virtual double check_Es(size_t i);
 
 protected:
     //! Cache for saved calculations within each Kinetics object.
@@ -934,6 +940,9 @@ protected:
 
     //! Net rate-of-progress for each reaction
     vector_fp m_ropnet;
+    
+    // vector to save changed activation energy for Blowers-Masel approximation
+    vector_fp m_bmE;
 
     //! @see skipUndeclaredSpecies()
     bool m_skipUndeclaredSpecies;

@@ -582,6 +582,7 @@ bool Kinetics::addReaction(shared_ptr<Reaction> r)
     m_ropr.push_back(0.0);
     m_ropnet.push_back(0.0);
     m_perturb.push_back(1.0);
+    m_bmE.push_back(0.0);
     return true;
 }
 
@@ -614,6 +615,17 @@ shared_ptr<Reaction> Kinetics::reaction(size_t i)
 {
     checkReactionIndex(i);
     return m_reactions[i];
+}
+
+double Kinetics::add_E(size_t i, double Ea)
+{
+    m_bmE[i] = Ea;
+    return m_bmE.data()[i];
+}
+
+double Kinetics::check_Es(size_t i)
+{
+    return m_bmE.data()[i];
 }
 
 shared_ptr<const Reaction> Kinetics::reaction(size_t i) const
