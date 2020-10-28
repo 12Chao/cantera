@@ -57,7 +57,7 @@ void GasKinetics::update_rates_T()
     m_pres = P;
     m_temp = T;
 }
-
+  
 void GasKinetics::update_rates_C()
 {
     thermo().getActivityConcentrations(m_conc.data());
@@ -203,6 +203,14 @@ void GasKinetics::getFwdRateConstants(doublereal* kfwd)
 {
     update_rates_C();
     update_rates_T();
+    doublereal T = thermo().temperature();
+    doublereal logT = log(T);
+    for (size_t i = 0; i != m_reactions.size(); i++) {
+        int rxn_type = reactionType(i);
+        if (rxn_type == 1) {
+            m_rates.Blowers_Masel_update(i, T, logT, m_rfn.data(), m_bmE[i]);
+        }
+    }
 
     // copy rate coefficients into ropf
     m_ropf = m_rfn;
