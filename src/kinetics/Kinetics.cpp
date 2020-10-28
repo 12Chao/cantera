@@ -617,16 +617,11 @@ shared_ptr<Reaction> Kinetics::reaction(size_t i)
     return m_reactions[i];
 }
 
-double Kinetics::add_E(size_t i, double Ea)
+void Kinetics::add_E(size_t i, double Ea)
 {
     m_bmE[i] = Ea;
-    return m_bmE.data()[i];
 }
 
-double Kinetics::check_Es(size_t i)
-{
-    return m_bmE.data()[i];
-}
 
 shared_ptr<const Reaction> Kinetics::reaction(size_t i) const
 {

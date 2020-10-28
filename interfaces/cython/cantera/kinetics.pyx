@@ -71,8 +71,6 @@ cdef class Kinetics(_SolutionBase):
     def add_activation_energy(self, n, Ea):
         self.kinetics.add_E(n, Ea)
 
-    def get_activation_energy(self, i):
-        return self.kinetics.check_Es(i)
 
     def kinetics_species_index(self, species, int phase=0):
         """

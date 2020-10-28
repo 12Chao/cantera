@@ -819,11 +819,9 @@ public:
         m_root = root;
     }
     
-    // add activation energy
-    virtual double add_E(size_t i, double Ea);
+    // add activation energy to Blowers_Masel activation energy change vector
+    virtual void add_E(size_t i, double Ea);
 
-    //check members in for m_bmE
-    virtual double check_Es(size_t i);
 
 protected:
     //! Cache for saved calculations within each Kinetics object.
@@ -942,6 +940,8 @@ protected:
     vector_fp m_ropnet;
     
     // vector to save changed activation energy for Blowers-Masel approximation
+    // std::vector<std::map<size_t, double>> m_bmE;
+    // std::map<size_t, doublereal> m_bmE;
     vector_fp m_bmE;
 
     //! @see skipUndeclaredSpecies()
