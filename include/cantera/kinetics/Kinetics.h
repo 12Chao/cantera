@@ -820,7 +820,7 @@ public:
     }
     
     // add activation energy to Blowers_Masel activation energy change vector
-    virtual void add_E(size_t i, double Ea);
+    virtual void add_enthalpy_change(size_t i, double Ea);
 
 
 protected:
@@ -942,7 +942,10 @@ protected:
     // vector to save changed activation energy for Blowers-Masel approximation
     // std::vector<std::map<size_t, double>> m_bmE;
     // std::map<size_t, doublereal> m_bmE;
-    vector_fp m_bmE;
+    // vector_fp m_bmE;
+
+    //vector to save the changed enthalpy for Blowers-Masel approximation
+    vector_fp m_bmH;
 
     //! @see skipUndeclaredSpecies()
     bool m_skipUndeclaredSpecies;

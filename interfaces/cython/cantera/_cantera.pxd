@@ -439,7 +439,7 @@ cdef extern from "cantera/kinetics/Kinetics.h" namespace "Cantera":
 
         double multiplier(int)
         void setMultiplier(int, double)
-        void add_E(int, double) except +translate_exception
+        void add_enthalpy_change(int, double) except +translate_exception
 
 
 cdef extern from "cantera/kinetics/InterfaceKinetics.h":
