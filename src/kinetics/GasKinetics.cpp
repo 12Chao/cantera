@@ -208,7 +208,7 @@ void GasKinetics::getFwdRateConstants(doublereal* kfwd)
     for (size_t i = 0; i != m_reactions.size(); i++) {
         int rxn_type = reactionType(i);
         if (rxn_type == 1) {
-            m_rates.Blowers_Masel_update(i, T, logT, m_rfn.data(), m_bmE[i]);
+            m_rates.Blowers_Masel_update(i, T, logT, m_rfn.data(), m_bmH[i]);
         }
     }
 
