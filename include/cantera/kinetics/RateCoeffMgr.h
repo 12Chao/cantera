@@ -69,9 +69,8 @@ public:
         }
     }
 
-    // update forward rate according to the effective activation energy change(E/R) saved in Blowers-Masel
-    // energy vector
-    // need to be improved: how to determine the unit of E and R 
+    // update forward rate according to the enthalpy change saved in Blowers-Masel
+    // enthalpy vector
     void Blowers_Masel_update(int i, doublereal T, doublereal logT, doublereal* values, double Delta_H) {
         // std::cout<<rxn_type<< " "<<effectiveActivationEnergy_R(i)<<" "<< effectivePreExponentialFactor(i) <<std::endl;
         doublereal recipT = 1.0/T; 

@@ -819,8 +819,8 @@ public:
         m_root = root;
     }
     
-    // add activation energy to Blowers_Masel activation energy change vector
-    virtual void add_enthalpy_change(size_t i, double Ea);
+    // add enthalpy change to Blowers_Masel enthalpy change vector
+    virtual void add_enthalpy_change(size_t i, double Delta_H);
 
 
 protected:
