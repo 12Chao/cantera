@@ -198,11 +198,8 @@ void GasKinetics::updateROP()
     }
     m_ROP_ok = true;
 }
-
-void GasKinetics::getFwdRateConstants(doublereal* kfwd)
+void GasKinetics::BlowersMaselupdate()
 {
-    update_rates_C();
-    update_rates_T();
     doublereal T = thermo().temperature();
     doublereal logT = log(T);
     for (size_t i = 0; i != m_reactions.size(); i++) {
@@ -211,6 +208,14 @@ void GasKinetics::getFwdRateConstants(doublereal* kfwd)
             m_rates.Blowers_Masel_update(i, T, logT, m_rfn.data(), m_bmH[i]);
         }
     }
+    // m_rates.Blowers_Masel_update(3, T, logT, m_rfn.data(), m_bmH[3]);
+}
+
+void GasKinetics::getFwdRateConstants(doublereal* kfwd)
+{
+    update_rates_C();
+    update_rates_T();
+    BlowersMaselupdate();
 
     // copy rate coefficients into ropf
     m_ropf = m_rfn;
