@@ -85,6 +85,8 @@ public:
             double new_Ea = 0;
             // the commeted out line below is used for test only will be deleted in the future
             // std::cout<< " "<<A<<" "<< E_R<<" "<<b<<" "<< E_change<<std::endl;
+            // Here is a problem that it should have a method to determine the unit 
+            // and the value of gas constant
             double Ea = effectiveActivationEnergy_R(i) * GasConstant;
             double low_limit = -4 * Ea;
             double high_limit = 4 * Ea;
