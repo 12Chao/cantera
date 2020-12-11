@@ -582,8 +582,6 @@ bool Kinetics::addReaction(shared_ptr<Reaction> r)
     m_ropr.push_back(0.0);
     m_ropnet.push_back(0.0);
     m_perturb.push_back(1.0);
-    // m_bmE.push_back(0.0);
-    m_bmH.push_back(0.0);
     return true;
 }
 
@@ -620,6 +618,9 @@ shared_ptr<Reaction> Kinetics::reaction(size_t i)
 
 void Kinetics::add_enthalpy_change(size_t i, double Delta_H)
 {
+    for (size_t index=0; index<m_kk; index++) {
+        m_bmH.push_back(0);
+    }
     m_bmH[i] = Delta_H;
 }
 

@@ -26,14 +26,31 @@ void BulkKinetics::getDeltaGibbs(doublereal* deltaG)
     thermo().getChemPotentials(m_grt.data());
     // Use the stoichiometric manager to find deltaG for each reaction.
     getReactionDelta(m_grt.data(), deltaG);
+    if (m_bmH_rxns.size() != 0) {
+        for (size_t i=0; i<m_reactions.size();i++) {
+            deltaG[i] = deltaG[i] + m_bmH_rxns[i];
+        }
+    }
 }
 
 void BulkKinetics::getDeltaEnthalpy(doublereal* deltaH)
 {
     // Get the partial molar enthalpy of all species in the ideal gas.
     thermo().getPartialMolarEnthalpies(m_grt.data());
+    getReactionDelta(m_grt.data(), deltaH);
+    for (size_t i=0; i<m_reactions.size(); i++) {
+        m_bmH_rxns.push_back(deltaH[i]);
+    }
+    if (m_bmH.size() != 0) {
+        for (size_t i=0; i<m_kk; i++) {
+            m_grt.data()[i] += m_bmH[i];
+        }
+    }
     // Use the stoichiometric manager to find deltaH for each reaction.
     getReactionDelta(m_grt.data(), deltaH);
+    for (size_t i=0; i<m_reactions.size(); i++) {
+        m_bmH_rxns[i] = deltaH[i] - m_bmH_rxns[i];
+    }
 }
 
 void BulkKinetics::getDeltaEntropy(doublereal* deltaS)

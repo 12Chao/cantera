@@ -944,9 +944,11 @@ protected:
     // std::map<size_t, doublereal> m_bmE;
     // vector_fp m_bmE;
 
-    //vector to save the changed enthalpy for Blowers-Masel approximation
+    //vector to save the changed species enthalpy for Blowers-Masel approximation
     vector_fp m_bmH;
-
+    //  //vector to save the changed reactions enthalpy for Blowers-Masel approximation   
+    vector_fp m_bmH_rxns;
+    
     //! @see skipUndeclaredSpecies()
     bool m_skipUndeclaredSpecies;
 
