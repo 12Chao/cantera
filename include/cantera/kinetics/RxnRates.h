@@ -156,15 +156,16 @@ public:
      * safely called for negative values of the pre-exponential factor.
      */
     doublereal updateRC(doublereal logT, doublereal recipT, doublereal deltaH) {
-        double Ea = m_E * GasConstant;
-        if (deltaH < -4 * Ea) {
+        double Ea0 = m_E0 * GasConstant;
+        if (deltaH < -4 * Ea0) {
             m_E = 0;
-        } else if (deltaH > 4 * Ea) {
+
+        } else if (deltaH > 4 * Ea0) {
             m_E = deltaH / GasConstant;
         } else {
             double m_w_ = m_w * GasConstant;
-            double vp = 2 * m_w_ * ((m_w_ + Ea) / (m_w_ - Ea));
-            double m_Ea = (m_w_ + deltaH / 2) * pow((vp - 2 * m_w_ + deltaH),2) / (pow(vp, 2) - pow((4 * m_w_), 2) + pow(deltaH, 2));
+            double vp = 2 * m_w_ * ((m_w_ + Ea0) / (m_w_ - Ea0));
+            double m_Ea = (m_w_ + deltaH / 2) * pow((vp - 2 * m_w_ + deltaH),2) / (pow(vp, 2) - 4 * pow(m_w_, 2) + pow(deltaH, 2));
             m_E = m_Ea / GasConstant;
         }
         return m_A * std::exp(m_b*logT - m_E*recipT);
@@ -186,14 +187,17 @@ public:
     doublereal activationEnergy_R() {
         return m_E;
     }
-
+    
+    doublereal activationEnergy_R0() {
+        return m_E0;
+    }
     //! Return the bond energy *w*
     doublereal bondEnergy() {
         return m_w;
     }    
 
 protected:
-    doublereal m_logA, m_b, m_E, m_A, m_w;
+    doublereal m_logA, m_b, m_E, m_A, m_w, m_E0;
 };
 
 /**

@@ -777,10 +777,18 @@ cdef class BlowersMasel:
         def __get__(self):
             return self.rate.bondEnergy() * gas_constant
 
+    property intrinsic_activation_energy:
+        """
+        The intrinsic activation energy *E* [J/kmol].
+        """    
+        def __get__(self):
+            return self.rate.activationEnergy_R0() * gas_constant
+
     def __repr__(self):
-        return 'BlowersMasel(A={:g}, b={:g}, E_intrinsic={:g}, w={:g})'.format(
+        return 'BlowersMasel(A={:g}, b={:g}, E_intrinsic={:g}, E={:g}, w={:g})'.format(
             self.pre_exponential_factor, self.temperature_exponent,
-            self.activation_energy, self.bond_energy)
+            self.intrinsic_activation_energy,self.activation_energy, 
+            self.bond_energy)
 
     def __call__(self, float T, float dH):
         cdef double logT = np.log(T)
