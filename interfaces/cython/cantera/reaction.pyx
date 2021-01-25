@@ -766,12 +766,11 @@ cdef class BlowersMasel:
         def __get__(self):
             return self.rate.temperatureExponent()
 
-    property activation_energy:
+    def activation_energy(self, float dH):
         """
         The activation energy *E* [J/kmol].
         """
-        def __get__(self):
-            return self.rate.activationEnergy_R() * gas_constant
+        return self.rate.activationEnergy_R(dH) * gas_constant
 
     property bond_energy:
         def __get__(self):
@@ -785,16 +784,14 @@ cdef class BlowersMasel:
             return self.rate.activationEnergy_R0() * gas_constant
 
     def __repr__(self):
-        return 'BlowersMasel(A={:g}, b={:g}, E_intrinsic={:g}, E={:g}, w={:g})'.format(
+        return 'BlowersMasel(A={:g}, b={:g}, E_intrinsic={:g}, w={:g})'.format(
             self.pre_exponential_factor, self.temperature_exponent,
-            self.intrinsic_activation_energy,self.activation_energy, 
-            self.bond_energy)
+            self.intrinsic_activation_energy, self.bond_energy)
 
     def __call__(self, float T, float dH):
         cdef double logT = np.log(T)
         cdef double recipT = 1/T
         return self.rate.updateRC(logT, recipT, dH)
-
 
 cdef wrapBlowersMasel(CxxBlowersMasel* rate, Reaction reaction):
     r = BlowersMasel(init=False)

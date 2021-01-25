@@ -156,18 +156,7 @@ public:
      * safely called for negative values of the pre-exponential factor.
      */
     doublereal updateRC(doublereal logT, doublereal recipT, doublereal deltaH) {
-        double Ea0 = m_E0 * GasConstant;
-        if (deltaH < -4 * Ea0) {
-            m_E = 0;
-
-        } else if (deltaH > 4 * Ea0) {
-            m_E = deltaH / GasConstant;
-        } else {
-            double m_w_ = m_w * GasConstant;
-            double vp = 2 * m_w_ * ((m_w_ + Ea0) / (m_w_ - Ea0));
-            double m_Ea = (m_w_ + deltaH / 2) * pow((vp - 2 * m_w_ + deltaH),2) / (pow(vp, 2) - 4 * pow(m_w_, 2) + pow(deltaH, 2));
-            m_E = m_Ea / GasConstant;
-        }
+        m_E = activationEnergy_R(deltaH);
         return m_A * std::exp(m_b*logT - m_E*recipT);
     }
 
@@ -184,7 +173,20 @@ public:
 
     //! Return the activation energy divided by the gas constant (i.e. the
     //! activation temperature) [K]
-    doublereal activationEnergy_R() {
+    doublereal activationEnergy_R(doublereal deltaH) {
+        
+        double Ea0 = m_E0 * GasConstant;
+        if (deltaH < -4 * Ea0) {
+            m_E = 0;
+
+        } else if (deltaH > 4 * Ea0) {
+            m_E = deltaH / GasConstant;
+        } else {
+            double m_w_ = m_w * GasConstant;
+            double vp = 2 * m_w_ * ((m_w_ + Ea0) / (m_w_ - Ea0));
+            double m_Ea = (m_w_ + deltaH / 2) * pow((vp - 2 * m_w_ + deltaH),2) / (pow(vp, 2) - 4 * pow(m_w_, 2) + pow(deltaH, 2));
+            m_E = m_Ea / GasConstant;
+        }
         return m_E;
     }
     

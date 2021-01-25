@@ -397,7 +397,7 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
         double updateRC(double, double, double)
         double preExponentialFactor()
         double temperatureExponent()
-        double activationEnergy_R()
+        double activationEnergy_R(double)
         double activationEnergy_R0()
         double bondEnergy()
 
