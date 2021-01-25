@@ -290,6 +290,17 @@ BlowersMaselReaction::BlowersMaselReaction()
 {
 }
 
+void BlowersMaselReaction::validate()
+{
+    Reaction::validate();
+    if (!allow_negative_pre_exponential_factor &&
+        rate.preExponentialFactor() < 0) {
+        throw CanteraError("BlowersMaselReaction::validate",
+            "Undeclared negative pre-exponential factor found in reaction '"
+            + equation() + "'");
+    }
+}
+
 BlowersMaselReaction::BlowersMaselReaction(const Composition& reactants_,
                                            const Composition& products_,
                                            const BlowersMasel& rate_)

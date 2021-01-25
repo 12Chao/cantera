@@ -268,6 +268,7 @@ public:
     BlowersMaselReaction();
     BlowersMaselReaction(const Composition& reactants,
                          const Composition& products, const BlowersMasel& rate);
+    virtual void validate();
     BlowersMasel rate;
     bool allow_negative_pre_exponential_factor;
 };
