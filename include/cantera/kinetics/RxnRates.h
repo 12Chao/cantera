@@ -106,11 +106,15 @@ protected:
  *        Ea = 0  if DeltaH < -4 E_0
  *        Ea = DeltaH   if DeltaH > 4 E_0
  *        Ea = (w_0 + DeltaH / 2)(V_P - 2w_0 + DeltaH)^2 / (V_P^^2 - 4w_0^2 + DeltaH^2)
- *        where
+ *   \f] 
+ * where
+ *   \f[
  *        V_P = 2w_0 (w_0 + E_0) / (w_0 - E_0)
- *        and w_0 is  theaverage of the bond dissociation energy of the 
- *        bond breaking and that beingformed, which can be approximated as
- *        arbitrary high value like 1000kJ/mol as long as w_0 >= 2 E_0
+ *   \f]
+ * and w_0 is  theaverage of the bond dissociation energy of the 
+ * bond breaking and that beingformed, which can be approximated as
+ * arbitrary high value like 1000kJ/mol as long as \f$ w_0 >= 2 E_0 \f$
+ *   \f[
  *        k_f =  A T^b \exp (-Ea/RT)
  *   \f]
  */
