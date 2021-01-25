@@ -38,12 +38,12 @@ BlowersMasel::BlowersMasel()
 {
 }
 
-BlowersMasel::BlowersMasel(doublereal A, doublereal b, doublereal E, doublereal w)
+BlowersMasel::BlowersMasel(doublereal A, doublereal b, doublereal E0, doublereal w)
     : m_b(b)
-    , m_E(E)
+    , m_E(E0)
     , m_A(A)
     , m_w(w)
-    , m_E0(E)
+    , m_E0(E0)
 {
     if (m_A  <= 0.0) {
         m_logA = -1.0E300;
