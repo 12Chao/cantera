@@ -10,7 +10,7 @@ cdef extern from "cantera/kinetics/reaction_defs.h" namespace "Cantera":
     cdef int CHEMACT_RXN
     cdef int INTERFACE_RXN
     cdef int BLOWERSMASEL_RXN
-
+    cdef int BMINTERFACE_RXN
 
 cdef class Reaction:
     """
@@ -897,6 +897,74 @@ cdef class InterfaceReaction(ElementaryReaction):
             cdef CxxInterfaceReaction* r = <CxxInterfaceReaction*>self.reaction
             r.sticking_species = stringify(species)
 
+cdef class BMInterfaceReaction(BlowersMaselReaction):
+    """ A reaction occurring on an `Interface` (i.e. a surface or an edge) """
+    reaction_type = BMINTERFACE_RXN
+
+    property coverage_deps:
+        """
+        Get/Set a dict containing adjustments to the Arrhenius rate expression
+        dependent on surface species coverages. The keys of the dict are species
+        names, and the values are tuples specifying the three coverage
+        parameters ``(a, m, E)`` which are the modifiers for the pre-exponential
+        factor [m, kmol, s units], the temperature exponent [nondimensional],
+        and the activation energy [J/kmol], respectively.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            deps = {}
+            cdef pair[string,CxxCoverageDependency] item
+            for item in r.coverage_deps:
+                deps[pystr(item.first)] = (item.second.a, item.second.m,
+                                           item.second.E * gas_constant)
+            return deps
+        def __set__(self, deps):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.coverage_deps.clear()
+            cdef str species
+            for species, D in deps.items():
+                r.coverage_deps[stringify(species)] = CxxCoverageDependency(
+                    D[0], D[2] / gas_constant, D[1])
+
+    property is_sticking_coefficient:
+        """
+        Get/Set a boolean indicating if the rate coefficient for this reaction
+        is expressed as a sticking coefficient rather than the forward rate
+        constant.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            return r.is_sticking_coefficient
+        def __set__(self, stick):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.is_sticking_coefficient = stick
+
+    property use_motz_wise_correction:
+        """
+        Get/Set a boolean indicating whether to use the correction factor
+        developed by Motz & Wise for reactions with high (near-unity) sticking
+        coefficients when converting the sticking coefficient to a rate
+        coefficient.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            return r.use_motz_wise_correction
+        def __set__(self, mw):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.use_motz_wise_correction = mw
+
+    property sticking_species:
+        """
+        The name of the sticking species. Needed only for reactions with
+        multiple non-surface reactant species, where the sticking species is
+        ambiguous.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            return pystr(r.sticking_species)
+        def __set__(self, species):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.sticking_species = stringify(species)
 
 cdef Reaction wrapReaction(shared_ptr[CxxReaction] reaction):
     """
@@ -920,6 +988,8 @@ cdef Reaction wrapReaction(shared_ptr[CxxReaction] reaction):
         R = BlowersMaselReaction(init=False)
     elif reaction_type == INTERFACE_RXN:
         R = InterfaceReaction(init=False)
+    elif reaction_type == BMINTERFACE_RXN:
+        R = BMInterfaceReaction(init=False)
     else:
         R = Reaction(init=False)
 
@@ -946,5 +1016,7 @@ cdef CxxReaction* newReaction(int reaction_type):
         return new CxxBlowersMaselReaction()
     elif reaction_type == INTERFACE_RXN:
         return new CxxInterfaceReaction()
+    elif reaction_type == BMINTERFACE_RXN:
+        return new CxxBMInterfaceReaction()
     else:
         return new CxxReaction(0)
