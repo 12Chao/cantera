@@ -272,6 +272,37 @@ public:
     BlowersMasel rate;
     bool allow_negative_pre_exponential_factor;
 };
+
+//! A reaction occurring on an interface (i.e. a SurfPhase or an EdgePhase)
+//! with the rate calcualted with Blowers Masel approximation.
+class BMInterfaceReaction : public BlowersMaselReaction
+{
+public:
+    BMInterfaceReaction();
+    BMInterfaceReaction(const Composition& reactants, const Composition& products,
+                      const BlowersMasel& rate, bool isStick=false);
+
+    //! Adjustments to the Arrhenius rate expression dependent on surface
+    //! species coverages. Three coverage parameters (a, E, m) are used for each
+    //! species on which the rate depends. See SurfaceArrhenius for details on
+    //! the parameterization.
+    std::map<std::string, CoverageDependency> coverage_deps;
+
+    //! Set to true if `rate` is a parameterization of the sticking coefficient
+    //! rather than the forward rate constant
+    bool is_sticking_coefficient;
+
+    //! Set to true if `rate` is a sticking coefficient which should be
+    //! translated into a rate coefficient using the correction factor developed
+    //! by Motz & Wise for reactions with high (near-unity) sticking
+    //! coefficients. Defaults to 'false'.
+    bool use_motz_wise_correction;
+
+    //! For reactions with multiple non-surface species, the sticking species
+    //! needs to be explicitly identified.
+    std::string sticking_species;
+};
+
 //! Create a new Reaction object for the reaction defined in `rxn_node`
 //!
 //! @deprecated The XML input format is deprecated and will be removed in

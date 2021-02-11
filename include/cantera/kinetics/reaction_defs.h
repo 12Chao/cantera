@@ -81,6 +81,11 @@ const int SURFACE_RXN = 20;
 //! A reaction occurring on an interface, e.g a surface or edge.
 const int INTERFACE_RXN = 20;
 
+//! A reaction occurring on an interface, e.g a surface or edge.
+//! The rate of the reaction can be calculated and updated by Blowers-
+//! Masel approximation
+const int BMINTERFACE_RXN =21;
+
 //!  This is a surface reaction that is formulated using the Butler-Volmer
 //!  formulation and using concentrations instead of activity concentrations
 //!  for its exchange current density formula.
