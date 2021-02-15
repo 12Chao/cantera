@@ -1169,10 +1169,6 @@ shared_ptr<Reaction> newReaction(const XML_Node& rxn_node)
         setupElectrochemicalReaction(*R, rxn_node);
         return R;
     } 
-    // else if (type == "blowersmasel") {
-        // auto R = make_shared<BlowersMaselReaction>();
-        // setupBlowersMaselReaction();
-        // return R;} 
     else {
         throw CanteraError("newReaction",
             "Unknown reaction type '" + rxn_node["type"] + "'");
