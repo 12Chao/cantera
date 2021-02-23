@@ -346,6 +346,9 @@ Units rateCoeffUnits(const Reaction& R, const Kinetics& kin,
                && dynamic_cast<const InterfaceReaction&>(R).is_sticking_coefficient) {
         // Sticking coefficients are dimensionless
         return Units();
+    } else if (R.reaction_type == BMINTERFACE_RXN
+               && dynamic_cast<const BMInterfaceReaction&>(R).is_sticking_coefficient) {
+        return Units();           
     }
 
     // Determine the units of the rate coefficient
@@ -495,7 +498,7 @@ BlowersMasel readBlowersMasel(const Reaction& R, const AnyValue& rate,
         auto& rate_map = rate.as<AnyMap>();
         A = units.convert(rate_map["A"], rc_units);
         b = rate_map["b"].asDouble();
-        Ta0 = units.convertActivationEnergy(rate_map["Ea"], "K");
+        Ta0 = units.convertActivationEnergy(rate_map["Ea0"], "K");
         w = units.convertActivationEnergy(rate_map["w"], "K");
     } else {
         auto& rate_vec = rate.asVector<AnyValue>(4);
@@ -1096,7 +1099,7 @@ void setupBMInterfaceReaction(BMInterfaceReaction& R, const AnyMap& node,
             kin.thermo().input().getBool("Motz-Wise", false));
         R.sticking_species = node.getString("sticking-species", "");
     } else {
-        throw InputFileError("setupInterfaceReaction", node,
+        throw InputFileError("setupBMInterfaceReaction", node,
             "Reaction must include either a 'rate-constant' or"
             " 'sticking-coefficient' node.");
     }
@@ -1190,7 +1193,7 @@ unique_ptr<Reaction> newReaction(const AnyMap& node, const Kinetics& kin)
             unique_ptr<ElectrochemicalReaction> R(new ElectrochemicalReaction());
             setupElectrochemicalReaction(*R, node, kin);
             return unique_ptr<Reaction>(move(R));
-        } else if (type == "surface blowers masel") {
+        } else if (type == "surface-Blowers-Masel") {
             unique_ptr<BMInterfaceReaction> R(new BMInterfaceReaction());
             setupBMInterfaceReaction(*R, node, kin);
             return unique_ptr<Reaction>(move(R));
@@ -1225,7 +1228,7 @@ unique_ptr<Reaction> newReaction(const AnyMap& node, const Kinetics& kin)
         unique_ptr<ChebyshevReaction> R(new ChebyshevReaction());
         setupChebyshevReaction(*R, node, kin);
         return unique_ptr<Reaction>(move(R));
-    } else if (type == "blowersmasel") {
+    } else if (type == "Blowers-Masel") {
         unique_ptr<BlowersMaselReaction> R(new BlowersMaselReaction());
         setupBlowersMaselReaction(*R, node, kin);
         return unique_ptr<Reaction>(move(R));}  
