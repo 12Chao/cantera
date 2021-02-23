@@ -174,7 +174,7 @@ TEST(Reaction, BlowersMaselFromYaml)
     auto sol = newSolution("gri30.yaml");
     AnyMap rxn = AnyMap::fromYamlString(
         "{equation: O + H2 <=> H + OH,"
-        " type: blowersmasel,"
+        " type: Blowers-Masel,"
         " rate-constant: [-3.87e+04 cm^3/mol/s, 2.7, 6260.0 cal/mol, 1e9 cal/mol],"
         " negative-A: true}");
 
