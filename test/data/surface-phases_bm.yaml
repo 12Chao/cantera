@@ -110,15 +110,15 @@ tpb-species:
 
 Pt-reactions:
 - equation: H2 + 2 Pt(s) => 2 H(s)
-  type: surface blowers masel
-  rate-constant: {A: 4.4579e10 cm^3/mol/s, b: 0.5, Ea: 0.0, w: 1000000 J/mol}
+  type: surface-Blowers-Masel
+  rate-constant: {A: 4.4579e10 cm^3/mol/s, b: 0.5, Ea0: 0.0 J/mol, w: 1000000 J/mol}
   orders: {H2: 1.0, Pt(s): 1.0}
 - equation: 2 H(s) => H2 + 2 Pt(s)
-  type: surface blowers masel
-  rate-constant: {A: 3.7e21 cm^2/mol/s, b: 0, Ea: 0, w: 1000000 J/mol}
+  type: surface-Blowers-Masel
+  rate-constant: {A: 3.7e21 cm^2/mol/s, b: 0, Ea0: 67400 J/mol, w: 1000000 J/mol}
   coverage-dependencies: {H(s): {a: 0, m: 0, E: -6000 J/mol}}
 - equation: H + Pt(s) => H(s)
-  type: surface blowers masel
+  type: surface-Blowers-Masel
   sticking-coefficient: [1.0, 0.0, 0.0, 1000000]
 
 
