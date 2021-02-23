@@ -42,8 +42,6 @@ void GasKinetics::update_rates_T()
         m_ROP_ok = false;
         if (m_blowersmasel_rates.nReactions()) {
             thermo().getPartialMolarEnthalpies(m_grt.data());
-            // Use the stoichiometric manager to find deltaH for each reaction.
-            // (for now, including ones that we don't need)
             getReactionDelta(m_grt.data(), m_dH.data());
             m_blowersmasel_rates.updateBlowersMasel(T, logT, m_rfn.data(), m_dH.data());
         }
