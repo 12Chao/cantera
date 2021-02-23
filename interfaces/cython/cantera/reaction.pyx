@@ -744,7 +744,7 @@ cdef class ChebyshevReaction(Reaction):
 cdef class BlowersMasel:
     def __cinit__(self, A=0, b=0, E=0, w=0, init=True):
         if init:
-            self.rate = new CxxBlowersMasel(A, b, E / gas_constant, w)
+            self.rate = new CxxBlowersMasel(A, b, E / gas_constant, w / gas_constant)
             self.reaction = None
 
     def __dealloc__(self):
@@ -784,7 +784,7 @@ cdef class BlowersMasel:
             return self.rate.activationEnergy_R0() * gas_constant
 
     def __repr__(self):
-        return 'BlowersMasel(A={:g}, b={:g}, E_intrinsic={:g}, w={:g})'.format(
+        return 'BlowersMasel(A={:g}, b={:g}, Ea0={:g}, w={:g})'.format(
             self.pre_exponential_factor, self.temperature_exponent,
             self.intrinsic_activation_energy, self.bond_energy)
 
