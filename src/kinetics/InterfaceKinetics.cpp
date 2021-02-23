@@ -733,7 +733,7 @@ BMSurfaceArrhenius InterfaceKinetics::buildBMSurfaceArrhenius(
                 if (iPhase != iInterface) {
                     // Non-interface species. There should be exactly one of these
                     if (foundStick) {
-                        throw CanteraError("InterfaceKinetics::buildSurfaceArrhenius",
+                        throw CanteraError("InterfaceKinetics::buildBMSurfaceArrhenius",
                             "Multiple non-interface species found"
                             "in sticking reaction: '" + r.equation() + "'");
                     }
@@ -742,7 +742,7 @@ BMSurfaceArrhenius InterfaceKinetics::buildBMSurfaceArrhenius(
                 }
             }
             if (!foundStick) {
-                throw CanteraError("InterfaceKinetics::buildSurfaceArrhenius",
+                throw CanteraError("InterfaceKinetics::buildBMSurfaceArrhenius",
                     "No non-interface species found"
                     "in sticking reaction: '" + r.equation() + "'");
             }
