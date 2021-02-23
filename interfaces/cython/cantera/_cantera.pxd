@@ -391,6 +391,22 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
     cdef cppclass CxxChebyshevReaction "Cantera::ChebyshevReaction" (CxxReaction):
         CxxChebyshevRate rate
 
+    cdef cppclass CxxBlowersMasel "Cantera::BlowersMasel":
+        CxxBlowersMasel()
+        CxxBlowersMasel(double, double, double, double)
+        double updateRC(double, double, double)
+        double preExponentialFactor()
+        double temperatureExponent()
+        double activationEnergy_R(double)
+        double activationEnergy_R0()
+        double bondEnergy()
+
+    
+    cdef cppclass CxxBlowersMaselReaction "Cantera::BlowersMaselReaction"(CxxReaction):
+        CxxBlowersMaselReaction()
+        CxxBlowersMasel rate
+        cbool allow_negative_pre_exponential_factor
+
     cdef cppclass CxxCoverageDependency "Cantera::CoverageDependency":
         CxxCoverageDependency(double, double, double)
         double a
@@ -398,6 +414,12 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
         double m
 
     cdef cppclass CxxInterfaceReaction "Cantera::InterfaceReaction" (CxxElementaryReaction):
+        stdmap[string, CxxCoverageDependency] coverage_deps
+        cbool is_sticking_coefficient
+        cbool use_motz_wise_correction
+        string sticking_species
+    
+    cdef cppclass CxxBMInterfaceReaction "Cantera::BMInterfaceReaction" (CxxBlowersMaselReaction):
         stdmap[string, CxxCoverageDependency] coverage_deps
         cbool is_sticking_coefficient
         cbool use_motz_wise_correction
@@ -1011,6 +1033,10 @@ cdef class Reaction:
 cdef class Arrhenius:
     cdef CxxArrhenius* rate
     cdef Reaction reaction # parent reaction, to prevent garbage collection
+
+cdef class BlowersMasel:
+    cdef CxxBlowersMasel* rate
+    cdef Reaction reaction
 
 cdef class Falloff:
     cdef shared_ptr[CxxFalloff] _falloff

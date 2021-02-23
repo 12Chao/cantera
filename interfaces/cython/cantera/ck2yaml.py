@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # encoding: utf-8
 
 # This file is part of Cantera. See License.txt in the top-level directory or
@@ -462,7 +462,7 @@ class SurfaceRate(KineticsModel):
                 # base reaction
                 if self.rate.Ea[1] != self.rate.parser.output_energy_units:
                     E = '{} {}'.format(E, self.rate.Ea[1])
-                    covdeps[species] = FlowList([A, m, E])
+                covdeps[species] = FlowList([A, m, E])
             output['coverage-dependencies'] = covdeps
 
 
@@ -1787,6 +1787,9 @@ class Parser:
                             revReaction.line_number = line_number
                             reactions.append(revReaction)
 
+                    for index, reaction in enumerate(reactions):
+                        reaction.index = index + 1
+
                 elif tokens[0].upper().startswith('TRAN'):
                     inHeader = False
                     line, comment = readline()
@@ -1818,9 +1821,6 @@ class Parser:
 
         for h in header:
             self.header_lines.append(h[indent:])
-
-        for index, reaction in enumerate(self.reactions):
-            reaction.index = index + 1
 
         if transportLines:
             self.parse_transport_data(transportLines, path, transport_start_line)
@@ -1898,7 +1898,7 @@ class Parser:
             metadata = BlockMap([
                 ('generator', 'ck2yaml'),
                 ('input-files', FlowList(files)),
-                ('cantera-version', '2.5.0b1'),
+                ('cantera-version', '2.5.0'),
                 ('date', formatdate(localtime=True)),
             ])
             if desc.strip():

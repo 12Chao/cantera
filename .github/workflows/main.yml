@@ -49,10 +49,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: [ '3.5', '3.6', '3.7', '3.8' ]
-        os: ['macos-10.15', 'macos-11.0']
+        python-version: [ '3.7', '3.8', '3.9' ]
+        os: ['macos-10.15']
       fail-fast: false
     steps:
+    # Attempt to fix intermittent cloning errors. The error message says something like
+    # error: RPC failed; curl 18 transfer closed with outstanding read data remaining
+    # The clone is already being done with --depth=1, so the next recommended fix is to
+    # increase the buffer size. See also:
+    # https://github.com/actions/virtual-environments/issues/2198
+    # https://stackoverflow.com/q/38618885
+    - name: Configure git
+      run: /usr/local/bin/git config --global http.postBuffer 1048576000
     - uses: actions/checkout@v2
       name: Checkout the repository
       with:
@@ -112,6 +120,8 @@ jobs:
   docs:
     name: Build docs
     runs-on: ubuntu-latest
+    env:
+      DEPLOY: ${{ github.event_name == 'push' && github.repository_owner == 'Cantera' && endsWith(github.ref, 'main') }}
     steps:
       - uses: actions/checkout@v2
         name: Checkout the repository
@@ -132,17 +142,17 @@ jobs:
           sphinxcontrib-katex sphinxcontrib-matlabdomain sphinxcontrib-doxylink
       - name: Build Cantera with documentation
         run: python3 `which scons` build doxygen_docs=y sphinx_docs=y
-      # The known_hosts key is generated with `ssh -F cantera.org` from a
+      # The known_hosts key is generated with `ssh-keygen -F cantera.org` from a
       # machine that has previously logged in to cantera.org and trusts
       # that it logged in to the right machine
       - name: Set up SSH key and host for deploy
-        if: github.event_name == 'push' && github.repository_owner == 'Cantera' && github.ref == 'main'
+        if: env.DEPLOY == 'true'
         uses: shimataro/ssh-key-action@v2
         with:
           key: ${{ secrets.CTDEPLOY_KEY }}
           known_hosts: ${{ secrets.CTDEPLOY_HOST }}
       - name: Upload the docs
-        if: github.event_name == 'push' && github.repository_owner == 'Cantera' && github.ref == 'main'
+        if: env.DEPLOY == 'true'
         env:
           RSYNC_USER: "ctdeploy"
           RSYNC_SERVER: "cantera.org"
@@ -164,6 +174,7 @@ jobs:
           submodules: recursive
       - name: Install Apt dependencies
         run: |
+          sudo apt-get update
           sudo apt-get install libboost-dev gfortran scons python3-numpy \
           python3-pip python3-setuptools python3-h5py python3-pandas \
           python3-ruamel.yaml python-numpy cython3 libsundials-dev liblapack-dev \

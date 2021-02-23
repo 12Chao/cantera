@@ -28,6 +28,30 @@ Arrhenius::Arrhenius(doublereal A, doublereal b, doublereal E)
     }
 }
 
+BlowersMasel::BlowersMasel()
+    : m_logA(-1.0E300)
+    , m_b(0.0)
+    , m_E(0.0)
+    , m_A(0.0)
+    , m_w(0.0)
+    , m_E0(0.0)
+{
+}
+
+BlowersMasel::BlowersMasel(doublereal A, doublereal b, doublereal E0, doublereal w)
+    : m_b(b)
+    , m_E(E0)
+    , m_A(A)
+    , m_w(w)
+    , m_E0(E0)
+{
+    if (m_A  <= 0.0) {
+        m_logA = -1.0E300;
+    } else {
+        m_logA = std::log(m_A);
+    }
+}
+
 SurfaceArrhenius::SurfaceArrhenius()
     : m_b(0.0)
     , m_E(0.0)
@@ -155,6 +179,42 @@ ChebyshevRate::ChebyshevRate(double Tmin, double Tmax, double Pmin, double Pmax,
         for (size_t p = 0; p < nP_; p++) {
             chebCoeffs_[nP_*t + p] = coeffs(t,p);
         }
+    }
+}
+
+BMSurfaceArrhenius::BMSurfaceArrhenius()
+    : m_b(0.0)
+    , m_E(0.0)
+    , m_A(0.0)
+    , m_E0(0.0)
+    , m_w(0.0)
+    , m_acov(0.0)
+    , m_ecov(0.0)
+    , m_mcov(0.0)
+{
+}
+
+BMSurfaceArrhenius::BMSurfaceArrhenius(double A, double b, double Ta, double w)
+    : m_b(b)
+    , m_E(Ta)
+    , m_A(A)
+    , m_E0(Ta)
+    , m_w(w)
+    , m_acov(0.0)
+    , m_ecov(0.0)
+    , m_mcov(0.0)
+{
+}
+
+void BMSurfaceArrhenius::addCoverageDependence(size_t k, doublereal a,
+                               doublereal m, doublereal e)
+{
+    m_sp.push_back(k);
+    m_ac.push_back(a);
+    m_ec.push_back(e);
+    if (m != 0.0) {
+        m_msp.push_back(k);
+        m_mc.push_back(m);
     }
 }
 

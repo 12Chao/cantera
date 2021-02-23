@@ -428,6 +428,12 @@ class converterTestCommon:
         self.assertEqual(gas.n_reactions, 0)
         self.assertEqual(surf.n_reactions, 15)
 
+        # Coverage dependencies
+        covdeps = surf.reaction(1).coverage_deps
+        self.assertIn('H_Pt', covdeps)
+        self.assertEqual(covdeps['OH_Pt'][1], 1.0)
+        self.assertNear(covdeps['H_Pt'][2], -6e6)
+
     def test_third_body_plus_falloff_reactions(self):
         self.convert('third_body_plus_falloff_reaction.inp')
         gas = ct.Solution('third_body_plus_falloff_reaction' + self.ext)
@@ -841,10 +847,10 @@ class ctml2yamlTest(utilities.CanteraTest):
 
         return ctmlPhase, yamlPhase
 
-    def checkThermo(self, ctmlPhase, yamlPhase, temperatures, tol=1e-7):
+    def checkThermo(self, ctmlPhase, yamlPhase, temperatures, pressure=ct.one_atm, tol=1e-7):
         for T in temperatures:
-            ctmlPhase.TP = T, ct.one_atm
-            yamlPhase.TP = T, ct.one_atm
+            ctmlPhase.TP = T, pressure
+            yamlPhase.TP = T, pressure
             cp_ctml = ctmlPhase.partial_molar_cp
             cp_yaml = yamlPhase.partial_molar_cp
             h_ctml = ctmlPhase.partial_molar_enthalpies
@@ -1134,7 +1140,7 @@ class ctml2yamlTest(utilities.CanteraTest):
             Path(self.test_work_dir).joinpath("liquid-water.yaml"),
         )
         ctmlWater, yamlWater = self.checkConversion("liquid-water")
-        self.checkThermo(ctmlWater, yamlWater, [300, 500, 1300, 2000])
+        self.checkThermo(ctmlWater, yamlWater, [300, 500, 1300, 2000], pressure=22064000.0)
         self.assertEqual(ctmlWater.transport_model, yamlWater.transport_model)
         dens = ctmlWater.density
         for T in [298, 1001, 2400]:

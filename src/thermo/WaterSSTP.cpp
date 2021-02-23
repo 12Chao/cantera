@@ -44,6 +44,13 @@ WaterSSTP::WaterSSTP(XML_Node& phaseRoot, const std::string& id) :
     importPhase(phaseRoot, this);
 }
 
+std::string WaterSSTP::phaseOfMatter() const {
+    const vector<std::string> phases = {
+        "gas", "liquid", "supercritical", "unstable-liquid", "unstable-gas"
+    };
+    return phases[m_sub.phaseState()];
+}
+
 void WaterSSTP::initThermo()
 {
     SingleSpeciesTP::initThermo();
@@ -267,14 +274,22 @@ void WaterSSTP::setPressure(doublereal p)
 {
     double T = temperature();
     double dens = density();
-    int waterState = WATER_GAS;
-    double rc = m_sub.Rhocrit();
-    if (dens > rc) {
-        waterState = WATER_LIQUID;
+    double pp = m_sub.psat(T);
+    int waterState = WATER_SUPERCRIT;
+    if (T < m_sub.Tcrit()) {
+        if (p >= pp) {
+            waterState = WATER_LIQUID;
+            dens = 1000.;
+        } else if (!m_allowGasPhase) {
+            throw CanteraError("WaterSSTP::setPressure",
+                "Model assumes liquid phase; pressure p = {} lies below\n"
+                "the saturation pressure (P_sat = {}).", p, pp);
+        }
     }
-    doublereal dd = m_sub.density(T, p, waterState, dens);
+
+    double dd = m_sub.density(T, p, waterState, dens);
     if (dd <= 0.0) {
-        throw CanteraError("WaterSSTP::setPressure", "error");
+        throw CanteraError("WaterSSTP::setPressure", "Error");
     }
     setDensity(dd);
 }
@@ -323,6 +338,11 @@ doublereal WaterSSTP::critDensity() const
 
 void WaterSSTP::setTemperature(const doublereal temp)
 {
+    if (temp < 273.16) {
+        throw CanteraError("WaterSSTP::setTemperature",
+            "Model assumes liquid phase; temperature T = {} lies below\n"
+            "the triple point temperature (T_triple = 273.16).", temp);
+    }
     Phase::setTemperature(temp);
     m_sub.setState_TR(temp, density());
 }

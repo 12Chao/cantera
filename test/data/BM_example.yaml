@@ -1,7 +1,6 @@
 description: |-
   Hydrogen-Oxygen submechanism extracted from GRI-Mech 3.0.
   Modified from the original to include N2.
-
 generator: ck2yaml
 input-files: [h2o2.inp, gri30_tran.dat]
 cantera-version: 2.5.0
@@ -34,7 +33,6 @@ phases:
     Please see the webpage at
     https://github.com/Cantera/cantera/wiki/deprecate_gri30_phases for more
     information.
-
 species:
 - name: H2
   composition: {H: 2}
@@ -207,81 +205,7 @@ species:
     rotational-relaxation: 4.0
 
 reactions:
-- equation: 2 O + M <=> O2 + M  # Reaction 1
-  type: three-body
-  rate-constant: {A: 1.2e+17, b: -1.0, Ea: 0.0}
-  efficiencies: {H2: 2.4, H2O: 15.4, AR: 0.83}
-- equation: O + H + M <=> OH + M  # Reaction 2
-  type: three-body
-  rate-constant: {A: 5.0e+17, b: -1.0, Ea: 0.0}
-  efficiencies: {H2: 2.0, H2O: 6.0, AR: 0.7}
-- equation: O + H2 <=> H + OH  # Reaction 3
-  rate-constant: {A: 3.87e+04, b: 2.7, Ea: 6260.0}
-- equation: O + HO2 <=> OH + O2  # Reaction 4
-  rate-constant: {A: 2.0e+13, b: 0.0, Ea: 0.0}
-- equation: O + H2O2 <=> OH + HO2  # Reaction 5
-  rate-constant: {A: 9.63e+06, b: 2.0, Ea: 4000.0}
-- equation: H + O2 + M <=> HO2 + M  # Reaction 6
-  type: three-body
-  rate-constant: {A: 2.8e+18, b: -0.86, Ea: 0.0}
-  efficiencies: {O2: 0.0, H2O: 0.0, N2: 0.0, AR: 0.0}
-- equation: H + 2 O2 <=> HO2 + O2  # Reaction 7
-  rate-constant: {A: 2.08e+19, b: -1.24, Ea: 0.0}
-- equation: H + O2 + H2O <=> HO2 + H2O  # Reaction 8
-  rate-constant: {A: 1.126e+19, b: -0.76, Ea: 0.0}
-- equation: H + O2 + N2 <=> HO2 + N2  # Reaction 9
-  rate-constant: {A: 2.6e+19, b: -1.24, Ea: 0.0}
-- equation: H + O2 + AR <=> HO2 + AR  # Reaction 10
-  rate-constant: {A: 7.0e+17, b: -0.8, Ea: 0.0}
-- equation: H + O2 <=> O + OH  # Reaction 11
-  rate-constant: {A: 2.65e+16, b: -0.6707, Ea: 1.7041e+04}
-- equation: 2 H + M <=> H2 + M  # Reaction 12
-  type: three-body
-  rate-constant: {A: 1.0e+18, b: -1.0, Ea: 0.0}
-  efficiencies: {H2: 0.0, H2O: 0.0, AR: 0.63}
-- equation: 2 H + H2 <=> 2 H2  # Reaction 13
-  rate-constant: {A: 9.0e+16, b: -0.6, Ea: 0.0}
-- equation: 2 H + H2O <=> H2 + H2O  # Reaction 14
-  rate-constant: {A: 6.0e+19, b: -1.25, Ea: 0.0}
-- equation: H + OH + M <=> H2O + M  # Reaction 15
-  type: three-body
-  rate-constant: {A: 2.2e+22, b: -2.0, Ea: 0.0}
-  efficiencies: {H2: 0.73, H2O: 3.65, AR: 0.38}
-- equation: H + HO2 <=> O + H2O  # Reaction 16
-  rate-constant: {A: 3.97e+12, b: 0.0, Ea: 671.0}
-- equation: H + HO2 <=> O2 + H2  # Reaction 17
-  rate-constant: {A: 4.48e+13, b: 0.0, Ea: 1068.0}
-- equation: H + HO2 <=> 2 OH  # Reaction 18
-  rate-constant: {A: 8.4e+13, b: 0.0, Ea: 635.0}
-- equation: H + H2O2 <=> HO2 + H2  # Reaction 19
-  rate-constant: {A: 1.21e+07, b: 2.0, Ea: 5200.0}
-- equation: H + H2O2 <=> OH + H2O  # Reaction 20
-  rate-constant: {A: 1.0e+13, b: 0.0, Ea: 3600.0}
-- equation: OH + H2 <=> H + H2O  # Reaction 21
-  rate-constant: {A: 2.16e+08, b: 1.51, Ea: 3430.0}
-- equation: 2 OH (+M) <=> H2O2 (+M)  # Reaction 22
-  type: falloff
-  low-P-rate-constant: {A: 2.3e+18, b: -0.9, Ea: -1700.0}
-  high-P-rate-constant: {A: 7.4e+13, b: -0.37, Ea: 0.0}
-  Troe: {A: 0.7346, T3: 94.0, T1: 1756.0, T2: 5182.0}
-  efficiencies: {H2: 2.0, H2O: 6.0, AR: 0.7}
-- equation: 2 OH <=> O + H2O  # Reaction 23
-  rate-constant: {A: 3.57e+04, b: 2.4, Ea: -2110.0}
-- equation: OH + HO2 <=> O2 + H2O  # Reaction 24
-  duplicate: true
-  rate-constant: {A: 1.45e+13, b: 0.0, Ea: -500.0}
-- equation: OH + H2O2 <=> HO2 + H2O  # Reaction 25
-  duplicate: true
-  rate-constant: {A: 2.0e+12, b: 0.0, Ea: 427.0}
-- equation: OH + H2O2 <=> HO2 + H2O  # Reaction 26
-  duplicate: true
-  rate-constant: {A: 1.7e+18, b: 0.0, Ea: 2.941e+04}
-- equation: 2 HO2 <=> O2 + H2O2  # Reaction 27
-  duplicate: true
-  rate-constant: {A: 1.3e+11, b: 0.0, Ea: -1630.0}
-- equation: 2 HO2 <=> O2 + H2O2  # Reaction 28
-  duplicate: true
-  rate-constant: {A: 4.2e+14, b: 0.0, Ea: 1.2e+04}
-- equation: OH + HO2 <=> O2 + H2O  # Reaction 29
-  duplicate: true
-  rate-constant: {A: 5.0e+15, b: 0.0, Ea: 1.733e+04}
+- equation: O + H2 <=> H + OH  # Reaction 2
+  type: Blowers-Masel
+  rate-constant: {A: 3.87e+04, b: 2.7, Ea0: 6260.0, w: 1e9}
+  note: Example would be clearer if we tweak the Ea0 so the actual Ea matches Reaction 1

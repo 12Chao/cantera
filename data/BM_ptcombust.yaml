@@ -1,7 +1,6 @@
 description: |-
   see https://www.detchem.com/mechanisms for
   more about this mechanism
-
   ---------------------------------------------------------------------!
   ***********************************************************************
   ****                                                                  *
@@ -17,11 +16,9 @@ description: |-
   ****                                                                  *
   ****                                                                  *
   ***********************************************************************
-
     Ref:- 1.) Deutschman et al., 26th Symp. (Intl.) on Combustion, 1996
               pp. 1747-1754
   -----------------------------------------------------------------------
-
 generator: cti2yaml
 cantera-version: 2.5.0
 date: Wed, 11 Dec 2019 16:59:14 -0500
@@ -171,16 +168,20 @@ reactions:
   rate-constant: {A: 4.4579e+10, b: 0.5, Ea: 0}
   orders: {PT(S): 1}
 - equation: 2 H(S) => H2 + 2 PT(S)  # Reaction 2
-  rate-constant: {A: 3.7e+21, b: 0, Ea: 67400}
+  type: surface-Blowers-Masel
+  rate-constant: {A: 3.7e+21, b: 0, Ea0: 67400, w: 1000000}
   coverage-dependencies:
     H(S): {a: 0.0, m: 0.0, E: -6000.0}
 - equation: H + PT(S) => H(S)  # Reaction 3
-  sticking-coefficient: {A: 1.0, b: 0, Ea: 0}
+  type: surface-Blowers-Masel
+  sticking-coefficient: {A: 1.0, b: 0, Ea0: 0, w: 1000000}
 - equation: O2 + 2 PT(S) => 2 O(S)  # Reaction 4
-  rate-constant: {A: 1.8e+21, b: -0.5, Ea: 0}
+  type: surface-Blowers-Masel
+  rate-constant: {A: 1.8e+21, b: -0.5, Ea0: 0, w: 1000000}
   duplicate: true
 - equation: O2 + 2 PT(S) => 2 O(S)  # Reaction 5
-  sticking-coefficient: {A: 0.023, b: 0, Ea: 0}
+  type: surface-Blowers-Masel
+  sticking-coefficient: {A: 0.023, b: 0, Ea0: 0, w: 1000000}
   duplicate: true
 - equation: 2 O(S) => O2 + 2 PT(S)  # Reaction 6
   rate-constant: {A: 3.7e+21, b: 0, Ea: 213200}
@@ -193,7 +194,8 @@ reactions:
 - equation: H2O(S) => H2O + PT(S)  # Reaction 9
   rate-constant: {A: 1.0e+13, b: 0, Ea: 40300}
 - equation: OH + PT(S) => OH(S)  # Reaction 10
-  sticking-coefficient: {A: 1.0, b: 0, Ea: 0}
+  type: surface-Blowers-Masel
+  sticking-coefficient: {A: 1.0, b: 0, Ea0: 0, w: 100000}
 - equation: OH(S) => OH + PT(S)  # Reaction 11
   rate-constant: {A: 1.0e+13, b: 0, Ea: 192800}
 - equation: H(S) + O(S) <=> OH(S) + PT(S)  # Reaction 12

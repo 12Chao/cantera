@@ -169,6 +169,39 @@ TEST(Reaction, ChebyshevFromYaml)
     EXPECT_NEAR(CR.rate.updateRC(std::log(T), 1.0/T), 130512.2773948636, 1e-9);
 }
 
+TEST(Reaction, BlowersMaselFromYaml)
+{
+    auto sol = newSolution("gri30.yaml");
+    AnyMap rxn = AnyMap::fromYamlString(
+        "{equation: O + H2 <=> H + OH,"
+        " type: Blowers-Masel,"
+        " rate-constant: [-3.87e+04 cm^3/mol/s, 2.7, 6260.0 cal/mol, 1e9 cal/mol],"
+        " negative-A: true}");
+
+    auto R = newReaction(rxn, *(sol->kinetics()));
+    EXPECT_EQ(R->reactants.at("H2"), 1);
+    EXPECT_EQ(R->products.at("OH"), 1);
+    EXPECT_EQ(R->reaction_type, BLOWERSMASEL_RXN);
+
+    auto ER = dynamic_cast<BlowersMaselReaction&>(*R);
+    doublereal E_intrinsic = 6260 / GasConst_cal_mol_K * GasConstant; // J/kmol
+    doublereal H_big = 5 * E_intrinsic;
+    doublereal H_small = -5 * E_intrinsic; 
+    doublereal H_mid = 4 * E_intrinsic;
+    doublereal w = 1e9 / GasConst_cal_mol_K * GasConstant; // J/kmol
+    doublereal vp = 2 * w * ((w + E_intrinsic) / (w - E_intrinsic));
+    doublereal Ea = (w + H_mid / 2) * (vp - 2 * w + H_mid) * (vp - 2 * w + H_mid)
+                    / (vp * vp - 4 * w * w + H_mid * H_mid );
+    EXPECT_DOUBLE_EQ(ER.rate.preExponentialFactor(), -38.7);
+    EXPECT_DOUBLE_EQ(ER.rate.activationEnergy_R0(), 6260 / GasConst_cal_mol_K);
+    EXPECT_DOUBLE_EQ(ER.rate.bondEnergy(), 1e9 / GasConst_cal_mol_K);
+    EXPECT_DOUBLE_EQ(ER.rate.activationEnergy_R(H_big), H_big / GasConstant);
+    EXPECT_DOUBLE_EQ(ER.rate.activationEnergy_R(H_small), 0);   
+    EXPECT_NEAR(ER.rate.activationEnergy_R(H_mid), Ea / GasConstant, 1e-7);
+    EXPECT_TRUE(ER.allow_negative_pre_exponential_factor);
+    EXPECT_FALSE(ER.allow_negative_orders);
+}
+
 TEST(Kinetics, GasKineticsFromYaml1)
 {
     AnyMap infile = AnyMap::fromYamlFile("ideal-gas.yaml");
@@ -233,6 +266,31 @@ TEST(Kinetics, InterfaceKineticsFromYaml)
 
     auto R3 = kin->reaction(2);
     auto IR3 = std::dynamic_pointer_cast<InterfaceReaction>(R3);
+    EXPECT_TRUE(IR3->is_sticking_coefficient);
+}
+
+TEST(Kinetics, BMInterfaceKineticsFromYaml)
+{
+    shared_ptr<ThermoPhase> gas(newPhase("surface-phases_bm.yaml", "gas"));
+    shared_ptr<ThermoPhase> surf_tp(newPhase("surface-phases_bm.yaml", "Pt-surf"));
+    shared_ptr<SurfPhase> surf = std::dynamic_pointer_cast<SurfPhase>(surf_tp);
+    std::vector<ThermoPhase*> phases{surf_tp.get(), gas.get()};
+    auto kin = newKinetics(phases, "surface-phases_bm.yaml", "Pt-surf");
+    EXPECT_EQ(kin->nReactions(), (size_t) 3);
+    EXPECT_EQ(kin->nTotalSpecies(), (size_t) 6);
+    auto R1 = kin->reaction(0);
+    auto IR1 = std::dynamic_pointer_cast<BMInterfaceReaction>(R1);
+    EXPECT_DOUBLE_EQ(R1->orders["Pt(s)"], 1.0);
+    EXPECT_DOUBLE_EQ(IR1->rate.preExponentialFactor(), 4.4579e7);
+
+    auto R2 = kin->reaction(1);
+    auto IR2 = std::dynamic_pointer_cast<BMInterfaceReaction>(R2);
+    EXPECT_DOUBLE_EQ(IR2->rate.preExponentialFactor(), 3.7e20);
+    EXPECT_DOUBLE_EQ(IR2->coverage_deps["H(s)"].E, -6e6 / GasConstant);
+    EXPECT_FALSE(IR2->is_sticking_coefficient);
+    
+    auto R3 = kin->reaction(2);
+    auto IR3 = std::dynamic_pointer_cast<BMInterfaceReaction>(R3);
     EXPECT_TRUE(IR3->is_sticking_coefficient);
 }
 

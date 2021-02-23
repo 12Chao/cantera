@@ -61,6 +61,8 @@ offers a number of starting points:
   <https://cantera.org/tutorials/input-files.html>`_
 - `Information about the Cantera community
   <https://cantera.org/community.html>`_
+- `Affiliated packages
+  <https://cantera.org/affiliated-packages.html>`_
 
 `Documentation for the development version of Cantera
 <https://cantera.org/documentation/dev-docs.html>`_ is also available.
@@ -88,8 +90,8 @@ possible.
 Development Site
 ================
 
-The current development version is 2.5.0b1. The current stable version is
-2.4.0. The `latest Cantera source code <https://github.com/Cantera/cantera>`_,
+The current development version is 2.5.0rc1. The current stable version is
+2.5.0. The `latest Cantera source code <https://github.com/Cantera/cantera>`_,
 the `issue tracker <https://github.com/Cantera/cantera/issues>`_ for bugs and
 enhancement requests, `downloads of Cantera releases and binary installers
 <https://github.com/Cantera/cantera/releases>`_ , and the `Cantera wiki

@@ -387,6 +387,16 @@ protected:
     SurfaceArrhenius buildSurfaceArrhenius(size_t i, InterfaceReaction& r,
                                            bool replace);
 
+    //! Build a BMSurfaceArrhenius object from a Reaction, taking into account
+    //! the possible sticking coefficient form and coverage dependencies
+    //! @param i  Reaction number
+    //! @param r  Reaction object containing rate coefficient parameters
+    //! @param replace  True if replacing an existing reaction
+    BMSurfaceArrhenius buildBMSurfaceArrhenius(size_t i, BMInterfaceReaction& r,
+                                           bool replace);
+
+    void addElectrochemicalReaction(InterfaceReaction& r, size_t i);
+        
     //! Temporary work vector of length m_kk
     vector_fp m_grt;
 
@@ -403,6 +413,14 @@ protected:
      *  The class SurfaceArrhenius is described in RxnRates.h
      */
     Rate1<SurfaceArrhenius> m_rates;
+
+    //! Templated class containing the vector of surface Blowers Masel reactions for this interface
+    /*!
+     *  The templated class is described in RateCoeffMgr.h
+     *  The class BMSurfaceArrhenius is described in RxnRates.h
+     */
+    Rate1<BMSurfaceArrhenius> m_blowers_masel_rates;
+
 
     bool m_redo_rates;
 

@@ -9,7 +9,8 @@ cdef extern from "cantera/kinetics/reaction_defs.h" namespace "Cantera":
     cdef int CHEBYSHEV_RXN
     cdef int CHEMACT_RXN
     cdef int INTERFACE_RXN
-
+    cdef int BLOWERSMASEL_RXN
+    cdef int BMINTERFACE_RXN
 
 cdef class Reaction:
     """
@@ -740,6 +741,92 @@ cdef class ChebyshevReaction(Reaction):
         r.rate.update_C(&logP)
         return r.rate.updateRC(logT, recipT)
 
+cdef class BlowersMasel:
+    def __cinit__(self, A=0, b=0, E=0, w=0, init=True):
+        if init:
+            self.rate = new CxxBlowersMasel(A, b, E / gas_constant, w / gas_constant)
+            self.reaction = None
+
+    def __dealloc__(self):
+        if self.reaction is None:
+            del self.rate
+
+    property pre_exponential_factor:
+        """
+        The pre-exponential factor *A* in units of m, kmol, and s raised to
+        powers depending on the reaction order.
+        """
+        def __get__(self):
+            return self.rate.preExponentialFactor()
+
+    property temperature_exponent:
+        """
+        The temperature exponent *b*.
+        """
+        def __get__(self):
+            return self.rate.temperatureExponent()
+
+    def activation_energy(self, float dH):
+        """
+        The activation energy *E* [J/kmol].
+        """
+        return self.rate.activationEnergy_R(dH) * gas_constant
+
+    property bond_energy:
+        def __get__(self):
+            return self.rate.bondEnergy() * gas_constant
+
+    property intrinsic_activation_energy:
+        """
+        The intrinsic activation energy *E* [J/kmol].
+        """    
+        def __get__(self):
+            return self.rate.activationEnergy_R0() * gas_constant
+
+    def __repr__(self):
+        return 'BlowersMasel(A={:g}, b={:g}, Ea0={:g}, w={:g})'.format(
+            self.pre_exponential_factor, self.temperature_exponent,
+            self.intrinsic_activation_energy, self.bond_energy)
+
+    def __call__(self, float T, float dH):
+        cdef double logT = np.log(T)
+        cdef double recipT = 1/T
+        return self.rate.updateRC(logT, recipT, dH)
+
+cdef wrapBlowersMasel(CxxBlowersMasel* rate, Reaction reaction):
+    r = BlowersMasel(init=False)
+    r.rate = rate
+    r.reaction = reaction
+    return r
+
+cdef class BlowersMaselReaction(Reaction):
+    """
+    A reaction which follows mass-action kinetics with Blowers Masel
+    reaction rate.
+    """
+    reaction_type = BLOWERSMASEL_RXN
+
+    property rate:
+        """ Get/Set the `Arrhenius` rate coefficient for this reaction. """
+        def __get__(self):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            return wrapBlowersMasel(&(r.rate), self)
+        def __set__(self, BlowersMasel rate):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            r.rate = deref(rate.rate)
+
+    property allow_negative_pre_exponential_factor:
+        """
+        Get/Set whether the rate coefficient is allowed to have a negative
+        pre-exponential factor.
+        """
+        def __get__(self):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            return r.allow_negative_pre_exponential_factor
+        def __set__(self, allow):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            r.allow_negative_pre_exponential_factor = allow
+
 
 cdef class InterfaceReaction(ElementaryReaction):
     """ A reaction occurring on an `Interface` (i.e. a surface or an edge) """
@@ -810,6 +897,74 @@ cdef class InterfaceReaction(ElementaryReaction):
             cdef CxxInterfaceReaction* r = <CxxInterfaceReaction*>self.reaction
             r.sticking_species = stringify(species)
 
+cdef class BMInterfaceReaction(BlowersMaselReaction):
+    """ A reaction occurring on an `Interface` (i.e. a surface or an edge) """
+    reaction_type = BMINTERFACE_RXN
+
+    property coverage_deps:
+        """
+        Get/Set a dict containing adjustments to the Arrhenius rate expression
+        dependent on surface species coverages. The keys of the dict are species
+        names, and the values are tuples specifying the three coverage
+        parameters ``(a, m, E)`` which are the modifiers for the pre-exponential
+        factor [m, kmol, s units], the temperature exponent [nondimensional],
+        and the activation energy [J/kmol], respectively.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            deps = {}
+            cdef pair[string,CxxCoverageDependency] item
+            for item in r.coverage_deps:
+                deps[pystr(item.first)] = (item.second.a, item.second.m,
+                                           item.second.E * gas_constant)
+            return deps
+        def __set__(self, deps):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.coverage_deps.clear()
+            cdef str species
+            for species, D in deps.items():
+                r.coverage_deps[stringify(species)] = CxxCoverageDependency(
+                    D[0], D[2] / gas_constant, D[1])
+
+    property is_sticking_coefficient:
+        """
+        Get/Set a boolean indicating if the rate coefficient for this reaction
+        is expressed as a sticking coefficient rather than the forward rate
+        constant.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            return r.is_sticking_coefficient
+        def __set__(self, stick):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.is_sticking_coefficient = stick
+
+    property use_motz_wise_correction:
+        """
+        Get/Set a boolean indicating whether to use the correction factor
+        developed by Motz & Wise for reactions with high (near-unity) sticking
+        coefficients when converting the sticking coefficient to a rate
+        coefficient.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            return r.use_motz_wise_correction
+        def __set__(self, mw):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.use_motz_wise_correction = mw
+
+    property sticking_species:
+        """
+        The name of the sticking species. Needed only for reactions with
+        multiple non-surface reactant species, where the sticking species is
+        ambiguous.
+        """
+        def __get__(self):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            return pystr(r.sticking_species)
+        def __set__(self, species):
+            cdef CxxBMInterfaceReaction* r = <CxxBMInterfaceReaction*>self.reaction
+            r.sticking_species = stringify(species)
 
 cdef Reaction wrapReaction(shared_ptr[CxxReaction] reaction):
     """
@@ -829,8 +984,12 @@ cdef Reaction wrapReaction(shared_ptr[CxxReaction] reaction):
         R = PlogReaction(init=False)
     elif reaction_type == CHEBYSHEV_RXN:
         R = ChebyshevReaction(init=False)
+    elif reaction_type == BLOWERSMASEL_RXN:
+        R = BlowersMaselReaction(init=False)
     elif reaction_type == INTERFACE_RXN:
         R = InterfaceReaction(init=False)
+    elif reaction_type == BMINTERFACE_RXN:
+        R = BMInterfaceReaction(init=False)
     else:
         R = Reaction(init=False)
 
@@ -853,7 +1012,11 @@ cdef CxxReaction* newReaction(int reaction_type):
         return new CxxPlogReaction()
     elif reaction_type == CHEBYSHEV_RXN:
         return new CxxChebyshevReaction()
+    elif reaction_type == BLOWERSMASEL_RXN:
+        return new CxxBlowersMaselReaction()
     elif reaction_type == INTERFACE_RXN:
         return new CxxInterfaceReaction()
+    elif reaction_type == BMINTERFACE_RXN:
+        return new CxxBMInterfaceReaction()
     else:
         return new CxxReaction(0)

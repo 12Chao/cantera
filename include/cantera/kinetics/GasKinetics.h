@@ -71,6 +71,7 @@ protected:
     //! Reaction index of each falloff reaction
     std::vector<size_t> m_fallindx;
 
+
     //! Map of reaction index to falloff reaction index (i.e indices in
     //! #m_falloff_low_rates and #m_falloff_high_rates)
     std::map<size_t, size_t> m_rfallindx;
@@ -88,6 +89,7 @@ protected:
 
     Rate1<Plog> m_plog_rates;
     Rate1<ChebyshevRate> m_cheb_rates;
+    Rate1<BlowersMasel> m_blowersmasel_rates;
 
     //! @name Reaction rate data
     //!@{
@@ -101,6 +103,7 @@ protected:
     vector_fp falloff_work;
     vector_fp concm_3b_values;
     vector_fp concm_falloff_values;
+    vector_fp blowers_masel_indices;
     //!@}
 
     void processFalloffReactions();
@@ -109,11 +112,13 @@ protected:
     void addFalloffReaction(FalloffReaction& r);
     void addPlogReaction(PlogReaction& r);
     void addChebyshevReaction(ChebyshevReaction& r);
+    void addBlowersMaselReaction(BlowersMaselReaction& r);
 
     void modifyThreeBodyReaction(size_t i, ThreeBodyReaction& r);
     void modifyFalloffReaction(size_t i, FalloffReaction& r);
     void modifyPlogReaction(size_t i, PlogReaction& r);
     void modifyChebyshevReaction(size_t i, ChebyshevReaction& r);
+    void modifyBlowersMaselReaction(size_t i, BlowersMaselReaction& r);
 
     //! Update the equilibrium constants in molar units.
     void updateKc();

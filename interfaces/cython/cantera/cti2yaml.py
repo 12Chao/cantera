@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # This file is part of Cantera. See License.txt in the top-level directory or
 # at https://cantera.org/license.txt for license and copyright information.
@@ -487,6 +487,8 @@ class const_cp(thermo):
         self.h0 = h0
         self.s0 = s0
         self.cp0 = cp0
+        self.tmin = tmin
+        self.tmax = tmax
 
     def get_yaml(self, out):
         super().get_yaml(out)
@@ -498,6 +500,10 @@ class const_cp(thermo):
             out['s0'] = applyUnits(self.s0)
         if self.cp0 is not None:
             out['cp0'] = applyUnits(self.cp0)
+        if self.tmin is not None:
+            out['T-min'] = applyUnits(self.tmin)
+        if self.tmax is not None:
+            out['T-max'] = applyUnits(self.tmax)
 
 
 class gas_transport:
@@ -1634,7 +1640,7 @@ def convert(filename=None, output_name=None, text=None):
         # information regarding conversion
         metadata = BlockMap([
             ('generator', 'cti2yaml'),
-            ('cantera-version', '2.5.0b1'),
+            ('cantera-version', '2.5.0'),
             ('date', formatdate(localtime=True)),
         ])
         if filename is not None:
