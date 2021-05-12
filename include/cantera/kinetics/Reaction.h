@@ -407,6 +407,7 @@ public:
                       const Arrhenius& rate, bool isStick=false);
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
     virtual void getParameters(AnyMap& reactionNode) const;
+    virtual void validate();
 
     virtual std::string type() const {
         return "interface";
@@ -477,6 +478,7 @@ public:
                       const BlowersMasel& rate, bool isStick=false);
     virtual void getParameters(AnyMap& reactionNode) const;
     virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void validate();
 
     virtual std::string type() const {
         return "surface-Blowers-Masel";

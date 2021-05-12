@@ -773,6 +773,14 @@ void InterfaceReaction::getParameters(AnyMap& reactionNode) const
     }
 }
 
+void InterfaceReaction::validate() {
+    ElementaryReaction::validate();
+    if (is_sticking_coefficient != false) {
+        rate.validate(equation());
+    }
+
+}
+
 ElectrochemicalReaction::ElectrochemicalReaction()
     : beta(0.5)
     , exchange_current_density_formulation(false)
@@ -888,6 +896,14 @@ void BlowersMaselInterfaceReaction::getParameters(AnyMap& reactionNode) const
             deps[d.first] = std::move(dep);
         }
         reactionNode["coverage-dependencies"] = std::move(deps);
+    }
+}
+
+void BlowersMaselInterfaceReaction::validate()
+{
+    BlowersMaselReaction::validate();
+    if (is_sticking_coefficient != false) {
+        rate.validate(equation());
     }
 }
 
