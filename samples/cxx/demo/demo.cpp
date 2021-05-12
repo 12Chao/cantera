@@ -1,10 +1,15 @@
-///////////////////////////////////////////////////////////////////////
-//
-// This demonstration program builds an object representing a
-// reacting gas mixture, and uses it to compute thermodynamic
-// properties, chemical equilibrium, and transport properties.
-//
-///////////////////////////////////////////////////////////////////////
+/*!
+ * @file demo.cpp
+ *
+ * Property Calculation Demo
+ *
+ * This demonstration program builds an object representing a reacting gas
+ * mixture, and uses it to compute thermodynamic properties, chemical
+ * equilibrium, and transport properties.
+ */
+
+// This file is part of Cantera. See License.txt in the top-level directory or
+// at https://cantera.org/license.txt for license and copyright information.
 
 // Include cantera header files. They should be included in the form
 // "cantera/*.h". These headers are designed for use in C++ programs and

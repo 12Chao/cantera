@@ -13,6 +13,7 @@
 
 #include "StoichManager.h"
 #include "cantera/base/ValueCache.h"
+#include "cantera/kinetics/ReactionFactory.h"
 
 namespace Cantera
 {
@@ -20,6 +21,7 @@ namespace Cantera
 class ThermoPhase;
 class Reaction;
 class Solution;
+class AnyMap;
 
 /**
  * @defgroup chemkinetics Chemical Kinetics
@@ -601,8 +603,17 @@ public:
      * are specific to the particular kinetics manager.
      *
      * @param i   reaction index
+     *
+     * @deprecated To be changed after Cantera 2.6.
      */
     virtual int reactionType(size_t i) const;
+
+    /**
+     * String specifying the type of reaction.
+     *
+     * @param i   reaction index
+     */
+    virtual std::string reactionTypeStr(size_t i) const;
 
     /**
      * True if reaction i has been declared to be reversible. If isReversible(i)
@@ -692,6 +703,11 @@ public:
      * arrays, etc.) that requires knowing the phases.
      */
     virtual void init() {}
+
+    //! Return the parameters for a phase definition which are needed to
+    //! reconstruct an identical object using the newKinetics function. This
+    //! excludes the reaction definitions, which are handled separately.
+    AnyMap parameters();
 
     /**
      * Resize arrays with sizes that depend on the total number of species.
@@ -928,6 +944,9 @@ protected:
 
     //! Net rate-of-progress for each reaction
     vector_fp m_ropnet;
+
+    //! The enthalpy change for each reaction to calculate Blowers-Masel rates
+    vector_fp m_dH;
 
     //! @see skipUndeclaredSpecies()
     bool m_skipUndeclaredSpecies;

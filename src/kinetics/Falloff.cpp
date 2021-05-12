@@ -9,6 +9,7 @@
 #include "cantera/base/stringUtils.h"
 #include "cantera/base/ctexceptions.h"
 #include "cantera/base/global.h"
+#include "cantera/base/AnyMap.h"
 #include "cantera/kinetics/Falloff.h"
 
 namespace Cantera
@@ -83,6 +84,19 @@ void Troe::getParameters(double* params) const {
     params[3] = m_t2;
 }
 
+void Troe::getParameters(AnyMap& reactionNode) const
+{
+    AnyMap params;
+    params["A"] = m_a;
+    params["T3"].setQuantity(1.0 / m_rt3, "K");
+    params["T1"].setQuantity(1.0 / m_rt1, "K");
+    if (std::abs(m_t2) > SmallNumber) {
+        params["T2"].setQuantity(m_t2, "K");
+    }
+    params.setFlowStyle();
+    reactionNode["Troe"] = std::move(params);
+}
+
 void SRI::init(const vector_fp& c)
 {
     if (c.size() != 3 && c.size() != 5) {
@@ -135,6 +149,20 @@ void SRI::getParameters(double* params) const
     params[2] = m_c;
     params[3] = m_d;
     params[4] = m_e;
+}
+
+void SRI::getParameters(AnyMap& reactionNode) const
+{
+    AnyMap params;
+    params["A"] = m_a;
+    params["B"].setQuantity(m_b, "K");
+    params["C"].setQuantity(m_c, "K");
+    if (m_d != 1.0 || m_e != 0.0) {
+        params["D"] = m_d;
+        params["E"] = m_e;
+    }
+    params.setFlowStyle();
+    reactionNode["SRI"] = std::move(params);
 }
 
 }

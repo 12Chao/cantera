@@ -105,7 +105,7 @@ cdef class Kinetics(_SolutionBase):
         ``i_reaction``. Changes to this object do not affect the `Kinetics` or
         `Solution` object until the `modify_reaction` function is called.
         """
-        return wrapReaction(self.kinetics.reaction(i_reaction))
+        return Reaction.wrap(self.kinetics.reaction(i_reaction))
 
     def reactions(self):
         """
@@ -158,9 +158,22 @@ cdef class Kinetics(_SolutionBase):
             self.kinetics.setMultiplier(i_reaction, value)
 
     def reaction_type(self, int i_reaction):
-        """Type of reaction *i_reaction*."""
+        """
+        Type code of reaction *i_reaction*.
+
+        .. deprecated:: 2.6
+        """
+        warnings.warn("Behavior changes after Cantera 2.6, "
+                      "when function will return a type string. "
+                      "Use method 'reaction_type_str' during "
+                      "transition instead.", DeprecationWarning)
         self._check_reaction_index(i_reaction)
         return self.kinetics.reactionType(i_reaction)
+
+    def reaction_type_str(self, int i_reaction):
+        """Type of reaction *i_reaction*."""
+        self._check_reaction_index(i_reaction)
+        return pystr(self.kinetics.reactionTypeStr(i_reaction))
 
     def reaction_equation(self, int i_reaction):
         """The equation for the specified reaction. See also `reaction_equations`."""
@@ -460,3 +473,19 @@ cdef class InterfaceKinetics(Kinetics):
         species in all phases.
         """
         return self.net_production_rates[self._phase_slice(phase)]
+
+    def write_yaml(self, filename, phases=None, units=None, precision=None,
+                   skip_user_defined=None):
+        """
+        See `_SolutionBase.write_yaml`.
+        """
+        if phases is not None:
+            phases = list(phases)
+        else:
+            phases = []
+
+        for phase in self._phase_indices:
+            if isinstance(phase, _SolutionBase) and phase is not self:
+                phases.append(phase)
+
+        super().write_yaml(filename, phases, units, precision, skip_user_defined)

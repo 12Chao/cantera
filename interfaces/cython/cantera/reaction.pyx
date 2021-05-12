@@ -1,14 +1,9 @@
 # This file is part of Cantera. See License.txt in the top-level directory or
 # at https://cantera.org/license.txt for license and copyright information.
 
-cdef extern from "cantera/kinetics/reaction_defs.h" namespace "Cantera":
-    cdef int ELEMENTARY_RXN
-    cdef int THREE_BODY_RXN
-    cdef int FALLOFF_RXN
-    cdef int PLOG_RXN
-    cdef int CHEBYSHEV_RXN
-    cdef int CHEMACT_RXN
-    cdef int INTERFACE_RXN
+
+# dictionary to store reaction classes
+cdef dict _reaction_class_registry = {}
 
 
 cdef class Reaction:
@@ -61,20 +56,43 @@ cdef class Reaction:
         R = ct.Reaction.fromCti('''reaction('O + H2 <=> H + OH',
                         [(3.87e4, 'cm3/mol/s'), 2.7, (6260, 'cal/mol')])''')
     """
-    reaction_type = 0
+    reaction_type = ""
 
     def __cinit__(self, reactants='', products='', init=True, **kwargs):
+
         if init:
-            self._reaction.reset(newReaction(self.reaction_type))
+            self._reaction = CxxNewReaction(stringify((self.reaction_type)))
             self.reaction = self._reaction.get()
             if reactants:
                 self.reactants = reactants
             if products:
                 self.products = products
 
-    cdef _assign(self, shared_ptr[CxxReaction] other):
-        self._reaction = other
-        self.reaction = self._reaction.get()
+    @staticmethod
+    cdef wrap(shared_ptr[CxxReaction] reaction):
+        """
+        Wrap a C++ Reaction object with a Python object of the correct derived type.
+        """
+        # ensure all reaction types are registered
+        if not(_reaction_class_registry):
+            def register_subclasses(cls):
+                for c in cls.__subclasses__():
+                    _reaction_class_registry[getattr(c, 'reaction_type')] = c
+                    register_subclasses(c)
+
+            # update global reaction class registry
+            register_subclasses(Reaction)
+
+        # identify class
+        rxn_type = pystr(reaction.get().type())
+        cls = _reaction_class_registry.get(rxn_type, Reaction)
+
+        # wrap C++ reaction
+        cdef Reaction R
+        R = cls(init=False)
+        R._reaction = reaction
+        R.reaction = R._reaction.get()
+        return R
 
     @staticmethod
     def fromCti(text):
@@ -87,7 +105,7 @@ cdef class Reaction:
         """
         cxx_reactions = CxxGetReactions(deref(CxxGetXmlFromString(stringify(text))))
         assert cxx_reactions.size() == 1, cxx_reactions.size()
-        return wrapReaction(cxx_reactions[0])
+        return Reaction.wrap(cxx_reactions[0])
 
     @staticmethod
     def fromXml(text):
@@ -99,7 +117,7 @@ cdef class Reaction:
             The XML input format is deprecated and will be removed in Cantera 3.0.
         """
         cxx_reaction = CxxNewReaction(deref(CxxGetXmlFromString(stringify(text))))
-        return wrapReaction(cxx_reaction)
+        return Reaction.wrap(cxx_reaction)
 
     @staticmethod
     def fromYaml(text, Kinetics kinetics):
@@ -114,7 +132,7 @@ cdef class Reaction:
         """
         cxx_reaction = CxxNewReaction(AnyMapFromYamlString(stringify(text)),
                                       deref(kinetics.kinetics))
-        return wrapReaction(cxx_reaction)
+        return Reaction.wrap(cxx_reaction)
 
     @staticmethod
     def listFromFile(filename, Kinetics kinetics=None, section='reactions'):
@@ -145,7 +163,7 @@ cdef class Reaction:
                                             deref(kinetics.kinetics))
         else:
             cxx_reactions = CxxGetReactions(deref(CxxGetXmlFile(stringify(filename))))
-        return [wrapReaction(r) for r in cxx_reactions]
+        return [Reaction.wrap(r) for r in cxx_reactions]
 
     @staticmethod
     def listFromXml(text):
@@ -160,7 +178,7 @@ cdef class Reaction:
             The XML input format is deprecated and will be removed in Cantera 3.0.
         """
         cxx_reactions = CxxGetReactions(deref(CxxGetXmlFromString(stringify(text))))
-        return [wrapReaction(r) for r in cxx_reactions]
+        return [Reaction.wrap(r) for r in cxx_reactions]
 
     @staticmethod
     def listFromCti(text):
@@ -175,7 +193,7 @@ cdef class Reaction:
         # Currently identical to listFromXml since get_XML_from_string is able
         # to distinguish between CTI and XML.
         cxx_reactions = CxxGetReactions(deref(CxxGetXmlFromString(stringify(text))))
-        return [wrapReaction(r) for r in cxx_reactions]
+        return [Reaction.wrap(r) for r in cxx_reactions]
 
     @staticmethod
     def listFromYaml(text, Kinetics kinetics):
@@ -186,7 +204,7 @@ cdef class Reaction:
         root = AnyMapFromYamlString(stringify(text))
         cxx_reactions = CxxGetReactions(root[stringify("items")],
                                         deref(kinetics.kinetics))
-        return [wrapReaction(r) for r in cxx_reactions]
+        return [Reaction.wrap(r) for r in cxx_reactions]
 
     property reactant_string:
         """
@@ -302,6 +320,15 @@ cdef class Reaction:
         def __set__(self, allow):
             self.reaction.allow_negative_orders = allow
 
+    property input_data:
+        """
+        Get input data for this reaction with its current parameter values,
+        along with any user-specified data provided with its input (YAML)
+        definition.
+        """
+        def __get__(self):
+            return anymap_to_dict(self.reaction.parameters(True))
+
     def __repr__(self):
         return '<{}: {}>'.format(self.__class__.__name__, self.equation)
 
@@ -375,12 +402,155 @@ cdef copyArrhenius(CxxArrhenius* rate):
     return r
 
 
+cdef class _ReactionRate:
+
+    def __repr__(self):
+        return "<{} at {:0x}>".format(pystr(self.base.type()), id(self))
+
+    def __call__(self, double temperature, pressure=None):
+        if pressure:
+            return self.base.eval(temperature, pressure)
+        else:
+            return self.base.eval(temperature)
+
+    def ddT(self, double temperature, pressure=None):
+        if pressure:
+            return self.base.ddT(temperature, pressure)
+        else:
+            return self.base.ddT(temperature)
+
+
+cdef class CustomRate(_ReactionRate):
+    r"""
+    A custom rate coefficient which depends on temperature only.
+
+    The simplest way to create a `CustomRate` object is to use a lambda function,
+    for example::
+
+        rr = CustomRate(lambda T: 38.7 * T**2.7 * exp(-3150.15/T))
+
+    Warning: this class is an experimental part of the Cantera API and
+        may be changed or removed without notice.
+    """
+    def __cinit__(self, k=None, init=True):
+
+        if init:
+            self._base.reset(new CxxCustomFunc1Rate())
+            self.base = self._base.get()
+            self.rate = <CxxCustomFunc1Rate*>(self.base)
+            self.set_rate_function(k)
+
+    def set_rate_function(self, k):
+        r"""
+        Set the function describing a custom reaction rate::
+
+            rr = CustomRate()
+            rr.set_rate_function(lambda T: 38.7 * T**2.7 * exp(-3150.15/T))
+        """
+        if k is None:
+            self._rate_func = None
+            return
+
+        if isinstance(k, Func1):
+            self._rate_func = k
+        else:
+            self._rate_func = Func1(k)
+
+        self.rate.setRateFunction(self._rate_func._func)
+
+
+cdef class ArrheniusRate(_ReactionRate):
+    r"""
+    A reaction rate coefficient which depends on temperature only and follows
+    the modified Arrhenius form:
+
+    .. math::
+
+        k_f = A T^b \exp{-\tfrac{E}{RT}}
+
+    where *A* is the `pre_exponential_factor`, *b* is the `temperature_exponent`,
+    and *E* is the `activation_energy`.
+
+    Warning: this class is an experimental part of the Cantera API and
+        may be changed or removed without notice.
+    """
+    def __cinit__(self, A=0, b=0, E=0, init=True):
+
+        if init:
+            self._base.reset(new CxxArrheniusRate(A, b, E / gas_constant))
+            self.base = self._base.get()
+            self.rate = <CxxArrheniusRate*>(self.base)
+
+    @staticmethod
+    cdef wrap(shared_ptr[CxxReactionRateBase] rate):
+        """
+        Wrap a C++ ReactionRateBase object with a Python object.
+        """
+        # wrap C++ reaction
+        cdef ArrheniusRate arr
+        arr = ArrheniusRate(init=False)
+        arr._base = rate
+        arr.base = arr._base.get()
+        arr.rate = <CxxArrheniusRate*>(arr.base)
+        return arr
+
+    property pre_exponential_factor:
+        """
+        The pre-exponential factor *A* in units of m, kmol, and s raised to
+        powers depending on the reaction order.
+        """
+        def __get__(self):
+            return self.rate.preExponentialFactor()
+
+    property temperature_exponent:
+        """
+        The temperature exponent *b*.
+        """
+        def __get__(self):
+            return self.rate.temperatureExponent()
+
+    property activation_energy:
+        """
+        The activation energy *E* [J/kmol].
+        """
+        def __get__(self):
+            return self.rate.activationEnergy_R() * gas_constant
+
+
 cdef class ElementaryReaction(Reaction):
     """
     A reaction which follows mass-action kinetics with a modified Arrhenius
     reaction rate.
+
+    An example for the definition of a `ElementaryReaction` object is given as::
+
+        rxn = ElementaryReaction(equation='H2 + O <=> H + OH',
+                                 rate={'A': 38.7, 'b': 2.7, 'Ea': 2.619184e+07},
+                                 kinetics=gas)
     """
-    reaction_type = ELEMENTARY_RXN
+    reaction_type = "elementary"
+
+    def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
+                 init=True, **kwargs):
+
+        if init and equation and kinetics:
+
+            if isinstance(rate, dict):
+                coeffs = ['{}: {}'.format(k, v) for k, v in rate.items()]
+            elif isinstance(rate, Arrhenius) or rate is None:
+                coeffs = ['{}: 0.'.format(k) for k in ['A', 'b', 'Ea']]
+            else:
+                raise TypeError("Invalid rate definition")
+
+            rate_def = '{{{}}}'.format(', '.join(coeffs))
+            yaml = '{{equation: {}, rate-constant: {}, type: {}}}'.format(
+                equation, rate_def, self.reaction_type)
+            self._reaction = CxxNewReaction(AnyMapFromYamlString(stringify(yaml)),
+                                            deref(kinetics.kinetics))
+            self.reaction = self._reaction.get()
+
+            if isinstance(rate, Arrhenius):
+                self.rate = rate
 
     property rate:
         """ Get/Set the `Arrhenius` rate coefficient for this reaction. """
@@ -409,7 +579,7 @@ cdef class ThreeBodyReaction(ElementaryReaction):
     A reaction with a non-reacting third body "M" that acts to add or remove
     energy from the reacting species.
     """
-    reaction_type = THREE_BODY_RXN
+    reaction_type = "three-body"
 
     cdef CxxThreeBodyReaction* tbr(self):
         return <CxxThreeBodyReaction*>self.reaction
@@ -538,7 +708,7 @@ cdef class FalloffReaction(Reaction):
     A reaction that is first-order in [M] at low pressure, like a third-body
     reaction, but zeroth-order in [M] as pressure increases.
     """
-    reaction_type = FALLOFF_RXN
+    reaction_type = "falloff"
 
     cdef CxxFalloffReaction* frxn(self):
         return <CxxFalloffReaction*>self.reaction
@@ -615,7 +785,7 @@ cdef class ChemicallyActivatedReaction(FalloffReaction):
     that the forward rate constant is written as being proportional to the low-
     pressure rate constant.
     """
-    reaction_type = CHEMACT_RXN
+    reaction_type = "chemically-activated"
 
 
 cdef class PlogReaction(Reaction):
@@ -623,7 +793,7 @@ cdef class PlogReaction(Reaction):
     A pressure-dependent reaction parameterized by logarithmically interpolating
     between Arrhenius rate expressions at various pressures.
     """
-    reaction_type = PLOG_RXN
+    reaction_type = "pressure-dependent-Arrhenius"
 
     property rates:
         """
@@ -666,7 +836,7 @@ cdef class ChebyshevReaction(Reaction):
     A pressure-dependent reaction parameterized by a bivariate Chebyshev
     polynomial in temperature and pressure.
     """
-    reaction_type = CHEBYSHEV_RXN
+    reaction_type = "Chebyshev"
 
     property Tmin:
         """ Minimum temperature [K] for the Chebyshev fit """
@@ -740,10 +910,204 @@ cdef class ChebyshevReaction(Reaction):
         r.rate.update_C(&logP)
         return r.rate.updateRC(logT, recipT)
 
+cdef class BlowersMasel:
+    """
+    A reaction rate coefficient which depends on temperature and enthalpy change
+    of the reaction follows Blowers-Masel approximation and modified Arrhenius form
+    described in `Arrhenius`. The functions are used by reactions defined using
+    `BlowersMaselReaction` and `BlowersMaselInterfaceReaction`.
+    """
+    def __cinit__(self, A=0, b=0, E0=0, w=0, init=True):
+        if init:
+            self.rate = new CxxBlowersMasel(A, b, E0 / gas_constant, w / gas_constant)
+            self.reaction = None
+
+    def __dealloc__(self):
+        if self.reaction is None:
+            del self.rate
+
+    property pre_exponential_factor:
+        """
+        The pre-exponential factor *A* in units of m, kmol, and s raised to
+        powers depending on the reaction order.
+        """
+        def __get__(self):
+            return self.rate.preExponentialFactor()
+
+    property temperature_exponent:
+        """
+        The temperature exponent *b*.
+        """
+        def __get__(self):
+            return self.rate.temperatureExponent()
+
+    def activation_energy(self, float dH):
+        """
+        The activation energy *E* [J/kmol]
+
+        :param dH: The enthalpy of reaction [J/kmol] at the current temperature
+        """
+        return self.rate.activationEnergy_R(dH) * gas_constant
+
+    property bond_energy:
+        """
+        Average bond dissociation energy of the bond being formed and broken
+        in the reaction *E* [J/kmol].
+        """
+        def __get__(self):
+            return self.rate.bondEnergy() * gas_constant
+
+    property intrinsic_activation_energy:
+        """
+        The intrinsic activation energy *E0* [J/kmol].
+        """
+        def __get__(self):
+            return self.rate.activationEnergy_R0() * gas_constant
+
+    def __repr__(self):
+        return 'BlowersMasel(A={:g}, b={:g}, E0={:g}, w={:g})'.format(
+            self.pre_exponential_factor, self.temperature_exponent,
+            self.intrinsic_activation_energy, self.bond_energy)
+
+    def __call__(self, float T, float dH):
+        cdef double logT = np.log(T)
+        cdef double recipT = 1/T
+        return self.rate.updateRC(logT, recipT, dH)
+
+cdef wrapBlowersMasel(CxxBlowersMasel* rate, Reaction reaction):
+    r = BlowersMasel(init=False)
+    r.rate = rate
+    r.reaction = reaction
+    return r
+
+cdef class BlowersMaselReaction(Reaction):
+    """
+    A reaction which follows mass-action kinetics with Blowers Masel
+    reaction rate.
+    """
+    reaction_type = "Blowers-Masel"
+
+    property rate:
+        """ Get/Set the `Arrhenius` rate coefficient for this reaction. """
+        def __get__(self):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            return wrapBlowersMasel(&(r.rate), self)
+        def __set__(self, BlowersMasel rate):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            r.rate = deref(rate.rate)
+
+    property allow_negative_pre_exponential_factor:
+        """
+        Get/Set whether the rate coefficient is allowed to have a negative
+        pre-exponential factor.
+        """
+        def __get__(self):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            return r.allow_negative_pre_exponential_factor
+        def __set__(self, allow):
+            cdef CxxBlowersMaselReaction* r = <CxxBlowersMaselReaction*>self.reaction
+            r.allow_negative_pre_exponential_factor = allow
+
+cdef class CustomReaction(Reaction):
+    """
+    A reaction which follows mass-action kinetics with a custom reaction rate.
+
+    An example for the definition of a `CustomReaction` object is given as::
+
+        rxn = CustomReaction(equation='H2 + O <=> H + OH',
+                             rate=lambda T: 38.7 * T**2.7 * exp(-3150.15428/T),
+                             kinetics=gas)
+
+    Warning: this class is an experimental part of the Cantera API and
+        may be changed or removed without notice.
+    """
+    reaction_type = "custom-rate-function"
+
+    def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
+                 init=True, **kwargs):
+
+        if init and equation and kinetics:
+
+            yaml = '{{equation: {}, type: {}}}'.format(equation, self.reaction_type)
+            self._reaction = CxxNewReaction(AnyMapFromYamlString(stringify(yaml)),
+                                            deref(kinetics.kinetics))
+            self.reaction = self._reaction.get()
+            self.rate = CustomRate(rate)
+
+    property rate:
+        """ Get/Set the `CustomRate` object for this reaction. """
+        def __get__(self):
+            return self._rate
+        def __set__(self, CustomRate rate):
+            self._rate = rate
+            cdef CxxCustomFunc1Reaction* r = <CxxCustomFunc1Reaction*>self.reaction
+            r.setRate(self._rate._base)
+
+
+cdef class TestReaction(Reaction):
+    """
+    A reaction which follows mass-action kinetics with a modified Arrhenius
+    reaction rate. The class is a re-implementation of `ElementaryReaction`
+    and serves for testing purposes.
+
+    An example for the definition of a `TestReaction` object is given as::
+
+        rxn = TestReaction(equation='H2 + O <=> H + OH',
+                           rate={'A': 38.7, 'b': 2.7, 'Ea': 2.619184e+07},
+                           kinetics=gas)
+
+    Warning: this class is an experimental part of the Cantera API and
+        may be changed or removed without notice.
+    """
+    reaction_type = "elementary-new"
+
+    def __init__(self, equation=None, rate=None, Kinetics kinetics=None,
+                 init=True, **kwargs):
+
+        if init and equation and kinetics:
+
+            if isinstance(rate, dict):
+                coeffs = ['{}: {}'.format(k, v) for k, v in rate.items()]
+            elif isinstance(rate, ArrheniusRate) or rate is None:
+                coeffs = ['{}: 0.'.format(k) for k in ['A', 'b', 'Ea']]
+            else:
+                raise TypeError("Invalid rate definition")
+
+            rate_def = '{{{}}}'.format(', '.join(coeffs))
+            yaml = '{{equation: {}, rate-constant: {}, type: {}}}'.format(
+                equation, rate_def, self.reaction_type)
+            self._reaction = CxxNewReaction(AnyMapFromYamlString(stringify(yaml)),
+                                            deref(kinetics.kinetics))
+            self.reaction = self._reaction.get()
+
+            if isinstance(rate, ArrheniusRate):
+                self.rate = rate
+
+    property rate:
+        """ Get/Set the `Arrhenius` rate coefficient for this reaction. """
+        def __get__(self):
+            cdef CxxTestReaction* r = <CxxTestReaction*>self.reaction
+            return ArrheniusRate.wrap(r.rate())
+        def __set__(self, ArrheniusRate rate):
+            cdef CxxTestReaction* r = <CxxTestReaction*>self.reaction
+            r.setRate(rate._base)
+
+    property allow_negative_pre_exponential_factor:
+        """
+        Get/Set whether the rate coefficient is allowed to have a negative
+        pre-exponential factor.
+        """
+        def __get__(self):
+            cdef CxxElementaryReaction* r = <CxxElementaryReaction*>self.reaction
+            return r.allow_negative_pre_exponential_factor
+        def __set__(self, allow):
+            cdef CxxElementaryReaction* r = <CxxElementaryReaction*>self.reaction
+            r.allow_negative_pre_exponential_factor = allow
+
 
 cdef class InterfaceReaction(ElementaryReaction):
     """ A reaction occurring on an `Interface` (i.e. a surface or an edge) """
-    reaction_type = INTERFACE_RXN
+    reaction_type = "interface"
 
     property coverage_deps:
         """
@@ -810,50 +1174,74 @@ cdef class InterfaceReaction(ElementaryReaction):
             cdef CxxInterfaceReaction* r = <CxxInterfaceReaction*>self.reaction
             r.sticking_species = stringify(species)
 
-
-cdef Reaction wrapReaction(shared_ptr[CxxReaction] reaction):
+cdef class BlowersMaselInterfaceReaction(BlowersMaselReaction):
     """
-    Wrap a C++ Reaction object with a Python object of the correct derived type.
+    A reaction occurring on an `Interface` (i.e. a surface or an edge)
+    with the rate parameterization of `BlowersMasel`.
     """
-    cdef int reaction_type = reaction.get().reaction_type
+    reaction_type = "surface-Blowers-Masel"
 
-    if reaction_type == ELEMENTARY_RXN:
-        R = ElementaryReaction(init=False)
-    elif reaction_type == THREE_BODY_RXN:
-        R = ThreeBodyReaction(init=False)
-    elif reaction_type == FALLOFF_RXN:
-        R = FalloffReaction(init=False)
-    elif reaction_type == CHEMACT_RXN:
-        R = ChemicallyActivatedReaction(init=False)
-    elif reaction_type == PLOG_RXN:
-        R = PlogReaction(init=False)
-    elif reaction_type == CHEBYSHEV_RXN:
-        R = ChebyshevReaction(init=False)
-    elif reaction_type == INTERFACE_RXN:
-        R = InterfaceReaction(init=False)
-    else:
-        R = Reaction(init=False)
+    property coverage_deps:
+        """
+        Get/Set a dict containing adjustments to the Arrhenius rate expression
+        dependent on surface species coverages. The keys of the dict are species
+        names, and the values are tuples specifying the three coverage
+        parameters ``(a, m, E)`` which are the modifiers for the pre-exponential
+        factor [m, kmol, s units], the temperature exponent [nondimensional],
+        and the activation energy [J/kmol], respectively.
+        """
+        def __get__(self):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            deps = {}
+            cdef pair[string,CxxCoverageDependency] item
+            for item in r.coverage_deps:
+                deps[pystr(item.first)] = (item.second.a, item.second.m,
+                                           item.second.E * gas_constant)
+            return deps
+        def __set__(self, deps):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            r.coverage_deps.clear()
+            cdef str species
+            for species, D in deps.items():
+                r.coverage_deps[stringify(species)] = CxxCoverageDependency(
+                    D[0], D[2] / gas_constant, D[1])
 
-    R._assign(reaction)
-    return R
+    property is_sticking_coefficient:
+        """
+        Get/Set a boolean indicating if the rate coefficient for this reaction
+        is expressed as a sticking coefficient rather than the forward rate
+        constant.
+        """
+        def __get__(self):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            return r.is_sticking_coefficient
+        def __set__(self, stick):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            r.is_sticking_coefficient = stick
 
-cdef CxxReaction* newReaction(int reaction_type):
-    """
-    Create a new C++ Reaction object of the specified type
-    """
-    if reaction_type == ELEMENTARY_RXN:
-        return new CxxElementaryReaction()
-    elif reaction_type == THREE_BODY_RXN:
-        return new CxxThreeBodyReaction()
-    elif reaction_type == FALLOFF_RXN:
-        return new CxxFalloffReaction()
-    elif reaction_type == CHEMACT_RXN:
-        return new CxxChemicallyActivatedReaction()
-    elif reaction_type == PLOG_RXN:
-        return new CxxPlogReaction()
-    elif reaction_type == CHEBYSHEV_RXN:
-        return new CxxChebyshevReaction()
-    elif reaction_type == INTERFACE_RXN:
-        return new CxxInterfaceReaction()
-    else:
-        return new CxxReaction(0)
+    property use_motz_wise_correction:
+        """
+        Get/Set a boolean indicating whether to use the correction factor
+        developed by Motz & Wise for reactions with high (near-unity) sticking
+        coefficients when converting the sticking coefficient to a rate
+        coefficient.
+        """
+        def __get__(self):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            return r.use_motz_wise_correction
+        def __set__(self, mw):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            r.use_motz_wise_correction = mw
+
+    property sticking_species:
+        """
+        The name of the sticking species. Needed only for reactions with
+        multiple non-surface reactant species, where the sticking species is
+        ambiguous.
+        """
+        def __get__(self):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            return pystr(r.sticking_species)
+        def __set__(self, species):
+            cdef CxxBlowersMaselInterfaceReaction* r = <CxxBlowersMaselInterfaceReaction*>self.reaction
+            r.sticking_species = stringify(species)

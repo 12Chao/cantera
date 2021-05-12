@@ -6,6 +6,7 @@
 // at https://cantera.org/license.txt for license and copyright information.
 
 #include "cantera/kinetics/Reaction.h"
+#include "cantera/kinetics/ReactionFactory.h"
 #include "cantera/kinetics/FalloffFactory.h"
 #include "cantera/kinetics/Kinetics.h"
 #include "cantera/thermo/ThermoPhase.h"
@@ -24,13 +25,43 @@ namespace ba = boost::algorithm;
 namespace Cantera
 {
 
+Reaction::Reaction()
+    : reaction_type(NONE)
+    , reversible(true)
+    , duplicate(false)
+    , allow_nonreactant_orders(false)
+    , allow_negative_orders(false)
+    , rate_units(0.0)
+    , m_valid(true)
+{
+}
+
+Reaction::Reaction(const Composition& reactants_,
+                   const Composition& products_)
+    : reaction_type(NONE)
+    , reactants(reactants_)
+    , products(products_)
+    , reversible(true)
+    , duplicate(false)
+    , allow_nonreactant_orders(false)
+    , allow_negative_orders(false)
+    , rate_units(0.0)
+    , m_valid(true)
+{
+}
+
 Reaction::Reaction(int type)
     : reaction_type(type)
     , reversible(true)
     , duplicate(false)
     , allow_nonreactant_orders(false)
     , allow_negative_orders(false)
+    , rate_units(0.0)
+    , m_valid(true)
 {
+    warn_deprecated("Reaction::Reaction()",
+        "To be removed after Cantera 2.6. Use constructor without parameter "
+        "'type' instead.");
 }
 
 Reaction::Reaction(int type, const Composition& reactants_,
@@ -42,7 +73,12 @@ Reaction::Reaction(int type, const Composition& reactants_,
     , duplicate(false)
     , allow_nonreactant_orders(false)
     , allow_negative_orders(false)
+    , rate_units(0.0)
+    , m_valid(true)
 {
+    warn_deprecated("Reaction::Reaction()",
+        "To be removed after Cantera 2.6. Use constructor without parameter "
+        "'type' instead.");
 }
 
 void Reaction::validate()
@@ -63,6 +99,46 @@ void Reaction::validate()
                     "order specified for species '" + order.first + "'");
             }
         }
+    }
+}
+
+AnyMap Reaction::parameters(bool withInput) const
+{
+    AnyMap out;
+    getParameters(out);
+    if (withInput) {
+        out.update(input);
+    }
+
+    static bool reg = AnyMap::addOrderingRules("Reaction",
+        {{"head", "type"},
+         {"head", "equation"},
+         {"tail", "duplicate"},
+         {"tail", "orders"},
+         {"tail", "negative-orders"},
+         {"tail", "nonreactant-orders"}
+        });
+    if (reg) {
+        out["__type__"] = "Reaction";
+    }
+    return out;
+}
+
+void Reaction::getParameters(AnyMap& reactionNode) const
+{
+    reactionNode["equation"] = equation();
+
+    if (duplicate) {
+        reactionNode["duplicate"] = true;
+    }
+    if (orders.size()) {
+        reactionNode["orders"] = orders;
+    }
+    if (allow_negative_orders) {
+        reactionNode["negative-orders"] = true;
+    }
+    if (allow_nonreactant_orders) {
+        reactionNode["nonreactant-orders"] = true;
     }
 }
 
@@ -105,19 +181,51 @@ std::string Reaction::equation() const
     }
 }
 
+void Reaction::calculateRateCoeffUnits(const Kinetics& kin)
+{
+    if (!valid()) {
+        // If a reaction is invalid because of missing species in the Kinetics
+        // object, determining the units of the rate coefficient is impossible.
+        return;
+    }
+
+    // Determine the units of the rate coefficient
+    Units rxn_phase_units = kin.thermo(kin.reactionPhaseIndex()).standardConcentrationUnits();
+    rate_units = rxn_phase_units;
+    rate_units *= Units(1.0, 0, 0, -1);
+    for (const auto& order : orders) {
+        const auto& phase = kin.speciesPhase(order.first);
+        rate_units *= phase.standardConcentrationUnits().pow(-order.second);
+    }
+    for (const auto& stoich : reactants) {
+        // Order for each reactant is the reactant stoichiometric coefficient,
+        // unless already overridden by user-specified orders
+        if (stoich.first == "M" || ba::starts_with(stoich.first, "(+")) {
+            // calculateRateCoeffUnits may be called before these pseudo-species
+            // have been stripped from the reactants
+            continue;
+        } else if (orders.find(stoich.first) == orders.end()) {
+            const auto& phase = kin.speciesPhase(stoich.first);
+            rate_units *= phase.standardConcentrationUnits().pow(-stoich.second);
+        }
+    }
+}
+
 ElementaryReaction::ElementaryReaction(const Composition& reactants_,
                                        const Composition products_,
                                        const Arrhenius& rate_)
-    : Reaction(ELEMENTARY_RXN, reactants_, products_)
+    : Reaction(reactants_, products_)
     , rate(rate_)
     , allow_negative_pre_exponential_factor(false)
 {
+    reaction_type = ELEMENTARY_RXN;
 }
 
 ElementaryReaction::ElementaryReaction()
-    : Reaction(ELEMENTARY_RXN)
+    : Reaction()
     , allow_negative_pre_exponential_factor(false)
 {
+    reaction_type = ELEMENTARY_RXN;
 }
 
 void ElementaryReaction::validate()
@@ -129,6 +237,17 @@ void ElementaryReaction::validate()
             "Undeclared negative pre-exponential factor found in reaction '"
             + equation() + "'");
     }
+}
+
+void ElementaryReaction::getParameters(AnyMap& reactionNode) const
+{
+    Reaction::getParameters(reactionNode);
+    if (allow_negative_pre_exponential_factor) {
+        reactionNode["negative-A"] = true;
+    }
+    AnyMap rateNode;
+    rate.getParameters(rateNode, rate_units);
+    reactionNode["rate-constant"] = std::move(rateNode);
 }
 
 ThirdBody::ThirdBody(double default_eff)
@@ -164,23 +283,45 @@ std::string ThreeBodyReaction::productString() const {
     return ElementaryReaction::productString() + " + M";
 }
 
+void ThreeBodyReaction::calculateRateCoeffUnits(const Kinetics& kin)
+{
+    ElementaryReaction::calculateRateCoeffUnits(kin);
+    const ThermoPhase& rxn_phase = kin.thermo(kin.reactionPhaseIndex());
+    rate_units *= rxn_phase.standardConcentrationUnits().pow(-1);
+}
+
+void ThreeBodyReaction::getParameters(AnyMap& reactionNode) const
+{
+    ElementaryReaction::getParameters(reactionNode);
+    reactionNode["type"] = "three-body";
+    reactionNode["efficiencies"] = third_body.efficiencies;
+    reactionNode["efficiencies"].setFlowStyle();
+    if (third_body.default_efficiency != 1.0) {
+        reactionNode["default-efficiency"] = third_body.default_efficiency;
+    }
+}
+
 FalloffReaction::FalloffReaction()
-    : Reaction(FALLOFF_RXN)
+    : Reaction()
     , falloff(new Falloff())
     , allow_negative_pre_exponential_factor(false)
+    , low_rate_units(0.0)
 {
+    reaction_type = FALLOFF_RXN;
 }
 
 FalloffReaction::FalloffReaction(
         const Composition& reactants_, const Composition& products_,
         const Arrhenius& low_rate_, const Arrhenius& high_rate_,
         const ThirdBody& tbody)
-    : Reaction(FALLOFF_RXN, reactants_, products_)
+    : Reaction(reactants_, products_)
     , low_rate(low_rate_)
     , high_rate(high_rate_)
     , third_body(tbody)
     , falloff(new Falloff())
+    , low_rate_units(0.0)
 {
+    reaction_type = FALLOFF_RXN;
 }
 
 std::string FalloffReaction::reactantString() const {
@@ -218,6 +359,33 @@ void FalloffReaction::validate() {
     }
 }
 
+void FalloffReaction::calculateRateCoeffUnits(const Kinetics& kin)
+{
+    Reaction::calculateRateCoeffUnits(kin);
+    const ThermoPhase& rxn_phase = kin.thermo(kin.reactionPhaseIndex());
+    low_rate_units = rate_units;
+    low_rate_units *= rxn_phase.standardConcentrationUnits().pow(-1);
+}
+
+void FalloffReaction::getParameters(AnyMap& reactionNode) const
+{
+    Reaction::getParameters(reactionNode);
+    reactionNode["type"] = "falloff";
+    AnyMap lowRateNode;
+    low_rate.getParameters(lowRateNode, low_rate_units);
+    reactionNode["low-P-rate-constant"] = std::move(lowRateNode);
+    AnyMap highRateNode;
+    high_rate.getParameters(highRateNode, rate_units);
+    reactionNode["high-P-rate-constant"] = std::move(highRateNode);
+    falloff->getParameters(reactionNode);
+
+    reactionNode["efficiencies"] = third_body.efficiencies;
+    reactionNode["efficiencies"].setFlowStyle();
+    if (third_body.default_efficiency != 1.0) {
+        reactionNode["default-efficiency"] = third_body.default_efficiency;
+    }
+}
+
 ChemicallyActivatedReaction::ChemicallyActivatedReaction()
 {
     reaction_type = CHEMACT_RXN;
@@ -232,29 +400,145 @@ ChemicallyActivatedReaction::ChemicallyActivatedReaction(
     reaction_type = CHEMACT_RXN;
 }
 
-PlogReaction::PlogReaction()
-    : Reaction(PLOG_RXN)
+void ChemicallyActivatedReaction::calculateRateCoeffUnits(const Kinetics& kin)
 {
+    Reaction::calculateRateCoeffUnits(kin); // Skip FalloffReaction
+    const ThermoPhase& rxn_phase = kin.thermo(kin.reactionPhaseIndex());
+    low_rate_units = rate_units;
+    rate_units *= rxn_phase.standardConcentrationUnits();
+}
+
+void ChemicallyActivatedReaction::getParameters(AnyMap& reactionNode) const
+{
+    FalloffReaction::getParameters(reactionNode);
+    reactionNode["type"] = "chemically-activated";
+}
+
+PlogReaction::PlogReaction()
+    : Reaction()
+{
+    reaction_type = PLOG_RXN;
 }
 
 PlogReaction::PlogReaction(const Composition& reactants_,
                            const Composition& products_, const Plog& rate_)
-    : Reaction(PLOG_RXN, reactants_, products_)
+    : Reaction(reactants_, products_)
     , rate(rate_)
 {
+    reaction_type = PLOG_RXN;
+}
+
+void PlogReaction::getParameters(AnyMap& reactionNode) const
+{
+    Reaction::getParameters(reactionNode);
+    reactionNode["type"] = "pressure-dependent-Arrhenius";
+    std::vector<AnyMap> rateList;
+    for (const auto& r : rate.rates()) {
+        AnyMap rateNode;
+        rateNode["P"].setQuantity(r.first, "Pa");
+        r.second.getParameters(rateNode, rate_units);
+        rateList.push_back(std::move(rateNode));
+    }
+    reactionNode["rate-constants"] = std::move(rateList);
 }
 
 ChebyshevReaction::ChebyshevReaction()
-    : Reaction(CHEBYSHEV_RXN)
+    : Reaction()
 {
+    reaction_type = CHEBYSHEV_RXN;
 }
 
 ChebyshevReaction::ChebyshevReaction(const Composition& reactants_,
                                      const Composition& products_,
                                      const ChebyshevRate& rate_)
-    : Reaction(CHEBYSHEV_RXN, reactants_, products_)
+    : Reaction(reactants_, products_)
     , rate(rate_)
 {
+    reaction_type = CHEBYSHEV_RXN;
+}
+
+void Reaction2::setParameters(const AnyMap& node, const Kinetics& kin)
+{
+    parseReactionEquation(*this, node["equation"], kin);
+    // Non-stoichiometric reaction orders
+    std::map<std::string, double> orders;
+    if (node.hasKey("orders")) {
+        for (const auto& order : node["orders"].asMap<double>()) {
+            orders[order.first] = order.second;
+            if (kin.kineticsSpeciesIndex(order.first) == npos) {
+                setValid(false);
+            }
+        }
+    }
+
+    // Flags
+    id = node.getString("id", "");
+    duplicate = node.getBool("duplicate", false);
+    allow_negative_orders = node.getBool("negative-orders", false);
+    allow_nonreactant_orders = node.getBool("nonreactant-orders", false);
+
+    calculateRateCoeffUnits(kin);
+    input = node;
+}
+
+CustomFunc1Reaction::CustomFunc1Reaction()
+    : Reaction2()
+{
+    reaction_type = CUSTOMPY_RXN;
+}
+
+void CustomFunc1Reaction::setParameters(const AnyMap& node, const Kinetics& kin)
+{
+    Reaction2::setParameters(node, kin);
+    setRate(
+        std::shared_ptr<CustomFunc1Rate>(new CustomFunc1Rate(node, rate_units)));
+}
+
+TestReaction::TestReaction()
+    : Reaction2()
+    , allow_negative_pre_exponential_factor(false)
+{
+}
+
+void TestReaction::setParameters(const AnyMap& node, const Kinetics& kin)
+{
+    Reaction2::setParameters(node, kin);
+
+    setRate(
+        std::shared_ptr<ArrheniusRate>(new ArrheniusRate(node, rate_units)));
+    allow_negative_pre_exponential_factor = node.getBool("negative-A", false);
+}
+
+void ChebyshevReaction::getParameters(AnyMap& reactionNode) const
+{
+    Reaction::getParameters(reactionNode);
+    reactionNode["type"] = "Chebyshev";
+    reactionNode["temperature-range"].setQuantity({rate.Tmin(), rate.Tmax()}, "K");
+    reactionNode["pressure-range"].setQuantity({rate.Pmin(), rate.Pmax()}, "Pa");
+    const auto& coeffs1d = rate.coeffs();
+    size_t nT = rate.nTemperature();
+    size_t nP = rate.nPressure();
+    std::vector<vector_fp> coeffs2d(nT, vector_fp(nP));
+    for (size_t i = 0; i < nT; i++) {
+        for (size_t j = 0; j < nP; j++) {
+            coeffs2d[i][j] = coeffs1d[nP*i + j];
+        }
+    }
+    // Unit conversions must take place later, after the destination unit system
+    // is known. A lambda function is used here to override the default behavior
+    Units rate_units2 = rate_units;
+    auto converter = [rate_units2](AnyValue& coeffs, const UnitSystem& units) {
+        if (rate_units2.factor() != 0.0) {
+            coeffs.asVector<vector_fp>()[0][0] += std::log10(units.convertFrom(1.0, rate_units2));
+        } else if (units.getDelta(UnitSystem()).size()) {
+            throw CanteraError("ChebyshevReaction::getParameters lambda",
+                "Cannot convert rate constant with unknown dimensions to a "
+                "non-default unit system");
+        }
+    };
+    AnyValue coeffs;
+    coeffs = std::move(coeffs2d);
+    reactionNode["data"].setQuantity(coeffs, converter);
 }
 
 InterfaceReaction::InterfaceReaction()
@@ -275,6 +559,48 @@ InterfaceReaction::InterfaceReaction(const Composition& reactants_,
     reaction_type = INTERFACE_RXN;
 }
 
+void InterfaceReaction::calculateRateCoeffUnits(const Kinetics& kin)
+{
+    ElementaryReaction::calculateRateCoeffUnits(kin);
+    if (is_sticking_coefficient || input.hasKey("sticking-coefficient")) {
+        rate_units = Units(1.0); // sticking coefficients are dimensionless
+    }
+}
+
+void InterfaceReaction::getParameters(AnyMap& reactionNode) const
+{
+    ElementaryReaction::getParameters(reactionNode);
+    if (is_sticking_coefficient) {
+        reactionNode["sticking-coefficient"] = std::move(reactionNode["rate-constant"]);
+        reactionNode.erase("rate-constant");
+    }
+    if (use_motz_wise_correction) {
+        reactionNode["Motz-Wise"] = true;
+    }
+    if (!sticking_species.empty()) {
+        reactionNode["sticking-species"] = sticking_species;
+    }
+    if (!coverage_deps.empty()) {
+        AnyMap deps;
+        for (const auto& d : coverage_deps) {
+            AnyMap dep;
+            dep["a"] = d.second.a;
+            dep["m"] = d.second.m;
+            dep["E"].setQuantity(d.second.E, "K", true);
+            deps[d.first] = std::move(dep);
+        }
+        reactionNode["coverage-dependencies"] = std::move(deps);
+    }
+}
+
+void InterfaceReaction::validate() {
+    ElementaryReaction::validate();
+    if (is_sticking_coefficient != false) {
+        rate.validate(equation());
+    }
+
+}
+
 ElectrochemicalReaction::ElectrochemicalReaction()
     : beta(0.5)
     , exchange_current_density_formulation(false)
@@ -290,6 +616,115 @@ ElectrochemicalReaction::ElectrochemicalReaction(const Composition& reactants_,
 {
 }
 
+void ElectrochemicalReaction::getParameters(AnyMap& reactionNode) const
+{
+    InterfaceReaction::getParameters(reactionNode);
+    if (beta != 0.5) {
+        reactionNode["beta"] = beta;
+    }
+    if (exchange_current_density_formulation) {
+        reactionNode["exchange-current-density-formulation"] = true;
+    }
+}
+
+BlowersMaselReaction::BlowersMaselReaction()
+    : allow_negative_pre_exponential_factor(false)
+{
+    reaction_type = BLOWERSMASEL_RXN;
+}
+
+void BlowersMaselReaction::validate()
+{
+    Reaction::validate();
+    if (!allow_negative_pre_exponential_factor &&
+        rate.preExponentialFactor() < 0) {
+        throw CanteraError("BlowersMaselReaction::validate",
+            "Undeclared negative pre-exponential factor found in reaction '"
+            + equation() + "'");
+    }
+}
+
+BlowersMaselReaction::BlowersMaselReaction(const Composition& reactants_,
+                                           const Composition& products_,
+                                           const BlowersMasel& rate_)
+    : Reaction(reactants_, products_)
+    , rate(rate_)
+    , allow_negative_pre_exponential_factor(false)
+{
+    reaction_type = BLOWERSMASEL_RXN;
+}
+
+void BlowersMaselReaction::getParameters(AnyMap& reactionNode) const
+{
+    Reaction::getParameters(reactionNode);
+    if (allow_negative_pre_exponential_factor) {
+        reactionNode["negative-A"] = true;
+    }
+    AnyMap rateNode;
+    rate.getParameters(rateNode, rate_units);
+    reactionNode["rate-constant"] = std::move(rateNode);
+}
+
+BlowersMaselInterfaceReaction::BlowersMaselInterfaceReaction()
+    : is_sticking_coefficient(false)
+    , use_motz_wise_correction(false)
+{
+    reaction_type = BMINTERFACE_RXN;
+}
+
+void BlowersMaselInterfaceReaction::validate()
+{
+    BlowersMaselReaction::validate();
+    if (is_sticking_coefficient != false) {
+        rate.validate(equation());
+    }
+}
+
+BlowersMaselInterfaceReaction::BlowersMaselInterfaceReaction(const Composition& reactants_,
+                                         const Composition& products_,
+                                         const BlowersMasel& rate_,
+                                         bool isStick)
+    : BlowersMaselReaction(reactants_, products_, rate_)
+    , is_sticking_coefficient(isStick)
+    , use_motz_wise_correction(false)
+{
+    reaction_type = BMINTERFACE_RXN;
+}
+
+void BlowersMaselInterfaceReaction::calculateRateCoeffUnits(const Kinetics& kin)
+{
+    BlowersMaselReaction::calculateRateCoeffUnits(kin);
+    if (is_sticking_coefficient || input.hasKey("sticking-coefficient")) {
+        rate_units = Units(1.0); // sticking coefficients are dimensionless
+    }
+}
+
+void BlowersMaselInterfaceReaction::getParameters(AnyMap& reactionNode) const
+{
+    BlowersMaselReaction::getParameters(reactionNode);
+    if (is_sticking_coefficient) {
+        reactionNode["sticking-coefficient"] = std::move(reactionNode["rate-constant"]);
+        reactionNode.erase("rate-constant");
+    }
+    if (use_motz_wise_correction) {
+        reactionNode["Motz-Wise"] = true;
+    }
+    if (!sticking_species.empty()) {
+        reactionNode["sticking-species"] = sticking_species;
+    }
+    if (!coverage_deps.empty()) {
+        AnyMap deps;
+        for (const auto& d : coverage_deps) {
+            AnyMap dep;
+            dep["a"] = d.second.a;
+            dep["m"] = d.second.m;
+            dep["E"].setQuantity(d.second.E, "K", true);
+            deps[d.first] = std::move(dep);
+        }
+        reactionNode["coverage-dependencies"] = std::move(deps);
+    }
+}
+
 Arrhenius readArrhenius(const XML_Node& arrhenius_node)
 {
     return Arrhenius(getFloat(arrhenius_node, "A", "toSI"),
@@ -297,50 +732,16 @@ Arrhenius readArrhenius(const XML_Node& arrhenius_node)
                      getFloat(arrhenius_node, "E", "actEnergy") / GasConstant);
 }
 
-Units rateCoeffUnits(const Reaction& R, const Kinetics& kin,
-                     int pressure_dependence=0)
-{
-    if (R.reaction_type == INVALID_RXN) {
-        // If a reaction is invalid because of missing species in the Kinetics
-        // object, determining the units of the rate coefficient is impossible.
-        return Units();
-    } else if (R.reaction_type == INTERFACE_RXN
-               && dynamic_cast<const InterfaceReaction&>(R).is_sticking_coefficient) {
-        // Sticking coefficients are dimensionless
-        return Units();
-    }
-
-    // Determine the units of the rate coefficient
-    Units rxn_phase_units = kin.thermo(kin.reactionPhaseIndex()).standardConcentrationUnits();
-    Units rcUnits = rxn_phase_units;
-    rcUnits *= Units(1.0, 0, 0, -1);
-    for (const auto& order : R.orders) {
-        const auto& phase = kin.speciesPhase(order.first);
-        rcUnits *= phase.standardConcentrationUnits().pow(-order.second);
-    }
-    for (const auto& stoich : R.reactants) {
-        // Order for each reactant is the reactant stoichiometric coefficient,
-        // unless already overridden by user-specified orders
-        if (stoich.first == "M") {
-            rcUnits *= rxn_phase_units.pow(-1);
-        } else if (R.orders.find(stoich.first) == R.orders.end()) {
-            const auto& phase = kin.speciesPhase(stoich.first);
-            rcUnits *= phase.standardConcentrationUnits().pow(-stoich.second);
-        }
-    }
-
-    // Incorporate pressure dependence for low-pressure falloff and high-
-    // pressure chemically-activated reaction limits
-    rcUnits *= rxn_phase_units.pow(-pressure_dependence);
-    return rcUnits;
-}
-
 Arrhenius readArrhenius(const Reaction& R, const AnyValue& rate,
                         const Kinetics& kin, const UnitSystem& units,
                         int pressure_dependence=0)
 {
     double A, b, Ta;
-    Units rc_units = rateCoeffUnits(R, kin, pressure_dependence);
+    Units rc_units = R.rate_units;
+    if (pressure_dependence) {
+        Units rxn_phase_units = kin.thermo(kin.reactionPhaseIndex()).standardConcentrationUnits();
+        rc_units *= rxn_phase_units.pow(-pressure_dependence);
+    }
     if (rate.is<AnyMap>()) {
         auto& rate_map = rate.as<AnyMap>();
         A = units.convert(rate_map["A"], rc_units);
@@ -447,6 +848,32 @@ void readEfficiencies(ThirdBody& tbody, const AnyMap& node)
     }
 }
 
+BlowersMasel readBlowersMasel(const Reaction& R, const AnyValue& rate,
+                        const Kinetics& kin, const UnitSystem& units,
+                        int pressure_dependence=0)
+{
+    double A, b, Ta0, w;
+    Units rc_units = R.rate_units;
+    if (pressure_dependence) {
+        Units rxn_phase_units = kin.thermo(kin.reactionPhaseIndex()).standardConcentrationUnits();
+        rc_units *= rxn_phase_units.pow(-pressure_dependence);
+    }
+    if (rate.is<AnyMap>()) {
+        auto& rate_map = rate.as<AnyMap>();
+        A = units.convert(rate_map["A"], rc_units);
+        b = rate_map["b"].asDouble();
+        Ta0 = units.convertActivationEnergy(rate_map["Ea0"], "K");
+        w = units.convertActivationEnergy(rate_map["w"], "K");
+    } else {
+        auto& rate_vec = rate.asVector<AnyValue>(4);
+        A = units.convert(rate_vec[0], rc_units);
+        b = rate_vec[1].asDouble();
+        Ta0 = units.convertActivationEnergy(rate_vec[2], "K");
+        w = units.convertActivationEnergy(rate_vec[3], "K");
+    }
+    return BlowersMasel(A, b, Ta0, w);
+}
+
 void setupReaction(Reaction& R, const XML_Node& rxn_node)
 {
     // Reactant and product stoichiometries
@@ -508,7 +935,7 @@ void parseReactionEquation(Reaction& R, const AnyValue& equation,
             }
             if (kin.kineticsSpeciesIndex(species) == npos
                 && stoich != -1 && species != "M") {
-                R.reaction_type = INVALID_RXN;
+                R.setValid(false);
             }
 
             if (reactants) {
@@ -540,7 +967,7 @@ void setupReaction(Reaction& R, const AnyMap& node, const Kinetics& kin)
         for (const auto& order : node["orders"].asMap<double>()) {
             R.orders[order.first] = order.second;
             if (kin.kineticsSpeciesIndex(order.first) == npos) {
-                R.reaction_type = INVALID_RXN;
+                R.setValid(false);
             }
         }
     }
@@ -552,6 +979,7 @@ void setupReaction(Reaction& R, const AnyMap& node, const Kinetics& kin)
     R.allow_nonreactant_orders = node.getBool("nonreactant-orders", false);
 
     R.input = node;
+    R.calculateRateCoeffUnits(kin);
 }
 
 void setupElementaryReaction(ElementaryReaction& R, const XML_Node& rxn_node)
@@ -673,17 +1101,10 @@ void setupFalloffReaction(FalloffReaction& R, const AnyMap& node,
         R.third_body.efficiencies[third_body.substr(2, third_body.size() - 3)] = 1.0;
     }
 
-    if (node["type"] == "falloff") {
-        R.low_rate = readArrhenius(R, node["low-P-rate-constant"], kin,
-                                   node.units(), 1);
-        R.high_rate = readArrhenius(R, node["high-P-rate-constant"], kin,
-                                    node.units());
-    } else { // type == "chemically-activated"
-        R.low_rate = readArrhenius(R, node["low-P-rate-constant"], kin,
-                                   node.units());
-        R.high_rate = readArrhenius(R, node["high-P-rate-constant"], kin,
-                                    node.units(), -1);
-    }
+    R.low_rate = readArrhenius(R, node["low-P-rate-constant"], kin,
+                                node.units(), 1);
+    R.high_rate = readArrhenius(R, node["high-P-rate-constant"], kin,
+                                node.units());
 
     readFalloff(R, node);
 }
@@ -789,8 +1210,7 @@ void setupChebyshevReaction(ChebyshevReaction&R, const AnyMap& node,
         }
     }
     const UnitSystem& units = node.units();
-    Units rcUnits = rateCoeffUnits(R, kin);
-    coeffs(0, 0) += std::log10(units.convert(1.0, rcUnits));
+    coeffs(0, 0) += std::log10(units.convertTo(1.0, R.rate_units));
     R.rate = ChebyshevRate(units.convert(T_range[0], "K"),
                            units.convert(T_range[1], "K"),
                            units.convert(P_range[0], "Pa"),
@@ -906,138 +1326,50 @@ void setupElectrochemicalReaction(ElectrochemicalReaction& R,
         "exchange-current-density-formulation", false);
 }
 
-bool isElectrochemicalReaction(Reaction& R, const Kinetics& kin)
+void setupBlowersMaselReaction(BlowersMaselReaction& R, const AnyMap& node,
+                             const Kinetics& kin)
 {
-    vector_fp e_counter(kin.nPhases(), 0.0);
-
-    // Find the number of electrons in the products for each phase
-    for (const auto& sp : R.products) {
-        size_t kkin = kin.kineticsSpeciesIndex(sp.first);
-        size_t i = kin.speciesPhaseIndex(kkin);
-        size_t kphase = kin.thermo(i).speciesIndex(sp.first);
-        e_counter[i] += sp.second * kin.thermo(i).charge(kphase);
-    }
-
-    // Subtract the number of electrons in the reactants for each phase
-    for (const auto& sp : R.reactants) {
-        size_t kkin = kin.kineticsSpeciesIndex(sp.first);
-        size_t i = kin.speciesPhaseIndex(kkin);
-        size_t kphase = kin.thermo(i).speciesIndex(sp.first);
-        e_counter[i] -= sp.second * kin.thermo(i).charge(kphase);
-    }
-
-    // If the electrons change phases then the reaction is electrochemical
-    for (double delta_e : e_counter) {
-        if (std::abs(delta_e) > 1e-4) {
-            return true;
-        }
-    }
-    return false;
+    setupReaction(R, node, kin);
+    R.allow_negative_pre_exponential_factor = node.getBool("negative-A", false);
+    R.rate = readBlowersMasel(R, node["rate-constant"], kin, node.units());
 }
 
-shared_ptr<Reaction> newReaction(const XML_Node& rxn_node)
+void setupBlowersMaselInterfaceReaction(BlowersMaselInterfaceReaction& R, const AnyMap& node,
+                            const Kinetics& kin)
 {
-    std::string type = toLowerCopy(rxn_node["type"]);
+    setupReaction(R, node, kin);
+    R.allow_negative_pre_exponential_factor = node.getBool("negative-A", false);
 
-    // Modify the reaction type for interface reactions which contain
-    // electrochemical reaction data
-    if (rxn_node.child("rateCoeff").hasChild("electrochem")
-        && (type == "edge" || type == "surface")) {
-        type = "electrochemical";
-    }
-
-    // Create a new Reaction object of the appropriate type
-    if (type == "elementary" || type == "arrhenius" || type == "") {
-        auto R = make_shared<ElementaryReaction>();
-        setupElementaryReaction(*R, rxn_node);
-        return R;
-    } else if (type == "threebody" || type == "three_body") {
-        auto R = make_shared<ThreeBodyReaction>();
-        setupThreeBodyReaction(*R, rxn_node);
-        return R;
-    } else if (type == "falloff") {
-        auto R = make_shared<FalloffReaction>();
-        setupFalloffReaction(*R, rxn_node);
-        return R;
-    } else if (type == "chemact" || type == "chemically_activated") {
-        auto R = make_shared<ChemicallyActivatedReaction>();
-        setupChemicallyActivatedReaction(*R, rxn_node);
-        return R;
-    } else if (type == "plog" || type == "pdep_arrhenius") {
-        auto R = make_shared<PlogReaction>();
-        setupPlogReaction(*R, rxn_node);
-        return R;
-    } else if (type == "chebyshev") {
-        auto R = make_shared<ChebyshevReaction>();
-        setupChebyshevReaction(*R, rxn_node);
-        return R;
-    } else if (type == "interface" || type == "surface" || type == "edge" ||
-               type == "global") {
-        auto R = make_shared<InterfaceReaction>();
-        setupInterfaceReaction(*R, rxn_node);
-        return R;
-    } else if (type == "electrochemical" ||
-               type == "butlervolmer_noactivitycoeffs" ||
-               type == "butlervolmer" ||
-               type == "surfaceaffinity") {
-        auto R = make_shared<ElectrochemicalReaction>();
-        setupElectrochemicalReaction(*R, rxn_node);
-        return R;
+    if (node.hasKey("rate-constant")) {
+        R.rate = readBlowersMasel(R, node["rate-constant"], kin, node.units());
+    } else if (node.hasKey("sticking-coefficient")) {
+        R.is_sticking_coefficient = true;
+        R.rate = readBlowersMasel(R, node["sticking-coefficient"], kin, node.units());
+        R.use_motz_wise_correction = node.getBool("Motz-Wise",
+            kin.thermo().input().getBool("Motz-Wise", false));
+        R.sticking_species = node.getString("sticking-species", "");
     } else {
-        throw CanteraError("newReaction",
-            "Unknown reaction type '" + rxn_node["type"] + "'");
-    }
-}
-
-unique_ptr<Reaction> newReaction(const AnyMap& node, const Kinetics& kin)
-{
-    std::string type = "elementary";
-    if (node.hasKey("type")) {
-        type = node["type"].asString();
+        throw InputFileError("setupBlowersMaselInterfaceReaction", node,
+            "Reaction must include either a 'rate-constant' or"
+            " 'sticking-coefficient' node.");
     }
 
-    if (kin.thermo(kin.reactionPhaseIndex()).nDim() < 3) {
-        // See if this is an electrochemical reaction
-        Reaction testReaction(0);
-        parseReactionEquation(testReaction, node["equation"], kin);
-        if (isElectrochemicalReaction(testReaction, kin)) {
-            unique_ptr<ElectrochemicalReaction> R(new ElectrochemicalReaction());
-            setupElectrochemicalReaction(*R, node, kin);
-            return unique_ptr<Reaction>(move(R));
-        } else {
-            unique_ptr<InterfaceReaction> R(new InterfaceReaction());
-            setupInterfaceReaction(*R, node, kin);
-            return unique_ptr<Reaction>(move(R));
+    if (node.hasKey("coverage-dependencies")) {
+        for (const auto& item : node["coverage-dependencies"].as<AnyMap>()) {
+            double a, E, m;
+            if (item.second.is<AnyMap>()) {
+                auto& cov_map = item.second.as<AnyMap>();
+                a = cov_map["a"].asDouble();
+                m = cov_map["m"].asDouble();
+                E = node.units().convertActivationEnergy(cov_map["E"], "K");
+            } else {
+                auto& cov_vec = item.second.asVector<AnyValue>(3);
+                a = cov_vec[0].asDouble();
+                m = cov_vec[1].asDouble();
+                E = node.units().convertActivationEnergy(cov_vec[2], "K");
+            }
+            R.coverage_deps[item.first] = CoverageDependency(a, E, m);
         }
-    }
-
-    if (type == "elementary") {
-        unique_ptr<ElementaryReaction> R(new ElementaryReaction());
-        setupElementaryReaction(*R, node, kin);
-        return unique_ptr<Reaction>(move(R));
-    } else if (type == "three-body") {
-        unique_ptr<ThreeBodyReaction> R(new ThreeBodyReaction());
-        setupThreeBodyReaction(*R, node, kin);
-        return unique_ptr<Reaction>(move(R));
-    } else if (type == "falloff") {
-        unique_ptr<FalloffReaction> R(new FalloffReaction());
-        setupFalloffReaction(*R, node, kin);
-        return unique_ptr<Reaction>(move(R));
-    } else if (type == "chemically-activated") {
-        unique_ptr<ChemicallyActivatedReaction> R(new ChemicallyActivatedReaction());
-        setupFalloffReaction(*R, node, kin);
-        return unique_ptr<Reaction>(move(R));
-    } else if (type == "pressure-dependent-Arrhenius") {
-        unique_ptr<PlogReaction> R(new PlogReaction());
-        setupPlogReaction(*R, node, kin);
-        return unique_ptr<Reaction>(move(R));
-    } else if (type == "Chebyshev") {
-        unique_ptr<ChebyshevReaction> R(new ChebyshevReaction());
-        setupChebyshevReaction(*R, node, kin);
-        return unique_ptr<Reaction>(move(R));
-    } else {
-        throw InputFileError("newReaction", node["type"],
-            "Unknown reaction type '{}'", type);
     }
 }
 
@@ -1056,7 +1388,7 @@ std::vector<shared_ptr<Reaction>> getReactions(const AnyValue& items,
     std::vector<shared_ptr<Reaction>> all_reactions;
     for (const auto& node : items.asVector<AnyMap>()) {
         shared_ptr<Reaction> R(newReaction(node, kinetics));
-        if (R->reaction_type != INVALID_RXN) {
+        if (R->valid()) {
             all_reactions.emplace_back(R);
         } else if (!kinetics.skipUndeclaredSpecies()) {
             throw InputFileError("getReactions", node,

@@ -5,6 +5,8 @@
 
 #include "cantera/kinetics/RxnRates.h"
 #include "cantera/base/Array.h"
+#include "cantera/base/AnyMap.h"
+#include <math.h>
 
 namespace Cantera
 {
@@ -25,6 +27,119 @@ Arrhenius::Arrhenius(doublereal A, doublereal b, doublereal E)
         m_logA = -1.0E300;
     } else {
         m_logA = std::log(m_A);
+    }
+}
+
+void Arrhenius::setParameters(const AnyValue& rate,
+                              const UnitSystem& units, const Units& rate_units)
+{
+    if (rate.is<AnyMap>()) {
+        auto& rate_map = rate.as<AnyMap>();
+        m_A = units.convert(rate_map["A"], rate_units);
+        m_b = rate_map["b"].asDouble();
+        m_E = units.convertActivationEnergy(rate_map["Ea"], "K");
+    } else {
+        auto& rate_vec = rate.asVector<AnyValue>(3);
+        m_A = units.convert(rate_vec[0], rate_units);
+        m_b = rate_vec[1].asDouble();
+        m_E = units.convertActivationEnergy(rate_vec[2], "K");
+    }
+
+    if (m_A  <= 0.0) {
+        m_logA = -1.0E300;
+    } else {
+        m_logA = std::log(m_A);
+    }
+}
+
+void Arrhenius::getParameters(AnyMap& rateNode, const Units& rate_units) const
+{
+    if (rate_units.factor() != 0.0) {
+        rateNode["A"].setQuantity(preExponentialFactor(), rate_units);
+    } else {
+        rateNode["A"] = preExponentialFactor();
+        // This can't be converted to a different unit system because the dimensions of
+        // the rate constant were not set. Can occur if the reaction was created outside
+        // the context of a Kinetics object and never added to a Kinetics object.
+        rateNode["__unconvertible__"] = true;
+    }
+
+    rateNode["b"] = temperatureExponent();
+    rateNode["Ea"].setQuantity(activationEnergy_R(), "K", true);
+    rateNode.setFlowStyle();
+}
+
+void Arrhenius::validate(const std::string& equation) {
+    fmt::memory_buffer err_reactions;
+    double T[] = {200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0};
+    for (size_t i=0; i < 6; i++) {
+        double gamma = m_A * std::exp(m_b*log(T[i]) - m_E*(1/T[i]));
+        if (gamma > 1) {
+             format_to(err_reactions,
+                       "\n Sticking coefficient is more than 1 for reaction '{}'\n"
+                       " at T = {:.1f}\n",
+                       equation, T[i]);
+        }
+    }
+    if (err_reactions.size()) {
+        throw CanteraError("Arrhenius::validate", to_string(err_reactions));
+    }
+}
+
+BlowersMasel::BlowersMasel()
+    : m_logA(-1.0E300)
+    , m_b(0.0)
+    , m_A(0.0)
+    , m_w(0.0)
+    , m_E0(0.0)
+{
+}
+
+BlowersMasel::BlowersMasel(double A, double b, double E0, double w)
+    : m_b(b)
+    , m_A(A)
+    , m_w(w)
+    , m_E0(E0)
+{
+    if (m_A  <= 0.0) {
+        m_logA = -1.0E300;
+    } else {
+        m_logA = std::log(m_A);
+    }
+}
+
+void BlowersMasel::getParameters(AnyMap& rateNode, const Units& rate_units) const
+{
+    if (rate_units.factor() != 0.0) {
+        rateNode["A"].setQuantity(preExponentialFactor(), rate_units);
+    } else {
+        rateNode["A"] = preExponentialFactor();
+        // This can't be converted to a different unit system because the dimensions of
+        // the rate constant were not set. Can occur if the reaction was created outside
+        // the context of a Kinetics object and never added to a Kinetics object.
+        rateNode["__unconvertible__"] = true;
+    }
+
+    rateNode["b"] = temperatureExponent();
+    rateNode["Ea0"].setQuantity(activationEnergy_R0(), "K", true);
+    rateNode["w"].setQuantity(bondEnergy(), "K", true);
+    rateNode.setFlowStyle();
+}
+
+void BlowersMasel::validate(const std::string& equation) {
+    fmt::memory_buffer err_reactions;
+    double T[] = {200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0};
+    for (size_t i=0; i < 6; i++) {
+        double gamma = m_A * std::exp(m_b*log(T[i]) - m_E0*(1/T[i]));
+        if (gamma > 1) {
+             format_to(err_reactions,
+                       "\n Sticking coefficient is more than 1 for reaction '{}'\n"
+                       " at T = {:.1f}\n",
+                       equation, T[i]);
+        }
+    }
+    if (err_reactions.size()) {
+        throw CanteraError("BlowersMasel::validate", to_string(err_reactions));
     }
 }
 
@@ -155,6 +270,40 @@ ChebyshevRate::ChebyshevRate(double Tmin, double Tmax, double Pmin, double Pmax,
         for (size_t p = 0; p < nP_; p++) {
             chebCoeffs_[nP_*t + p] = coeffs(t,p);
         }
+    }
+}
+
+BMSurfaceArrhenius::BMSurfaceArrhenius()
+    : m_b(0.0)
+    , m_A(0.0)
+    , m_E0(0.0)
+    , m_w(0.0)
+    , m_acov(0.0)
+    , m_ecov(0.0)
+    , m_mcov(0.0)
+{
+}
+
+BMSurfaceArrhenius::BMSurfaceArrhenius(double A, double b, double Ta, double w)
+    : m_b(b)
+    , m_A(A)
+    , m_E0(Ta)
+    , m_w(w)
+    , m_acov(0.0)
+    , m_ecov(0.0)
+    , m_mcov(0.0)
+{
+}
+
+void BMSurfaceArrhenius::addCoverageDependence(size_t k, double a,
+                               double m, double e)
+{
+    m_sp.push_back(k);
+    m_ac.push_back(a);
+    m_ec.push_back(e);
+    if (m != 0.0) {
+        m_msp.push_back(k);
+        m_mc.push_back(m);
     }
 }
 

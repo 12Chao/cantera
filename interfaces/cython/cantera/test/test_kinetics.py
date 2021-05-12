@@ -50,14 +50,14 @@ class TestKinetics(utilities.CanteraTest):
         self.assertArrayNear(0.5 * rev_rates0, rev_rates2)
 
     def test_reaction_type(self):
-        self.assertNear(self.phase.reaction_type(0), 2) # 3rd body
-        self.assertNear(self.phase.reaction_type(2), 1) # elementary
-        self.assertNear(self.phase.reaction_type(20), 4) # falloff
+        self.assertEqual(self.phase.reaction_type_str(0), "three-body")
+        self.assertEqual(self.phase.reaction_type_str(2), "elementary")
+        self.assertEqual(self.phase.reaction_type_str(20), "falloff")
 
         with self.assertRaisesRegex(ValueError, 'out of range'):
-            self.phase.reaction_type(33)
+            self.phase.reaction_type_str(33)
         with self.assertRaisesRegex(ValueError, 'out of range'):
-            self.phase.reaction_type(-2)
+            self.phase.reaction_type_str(-2)
 
     def test_reaction_equations(self):
         self.assertEqual(self.phase.n_reactions,
@@ -842,6 +842,25 @@ class TestReaction(utilities.CanteraTest):
         self.assertIn('HO2', R[2].products)
         self.assertEqual(R[0].rate.temperature_exponent, 2.7)
 
+    def test_input_data_from_file(self):
+        R = self.gas.reaction(0)
+        data = R.input_data
+        self.assertEqual(data['type'], 'three-body')
+        self.assertEqual(data['efficiencies'],
+                         {'H2': 2.4, 'H2O': 15.4, 'AR': 0.83})
+        self.assertEqual(data['equation'], R.equation)
+
+    def test_input_data_from_scratch(self):
+        r = ct.ElementaryReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
+        r.rate = ct.Arrhenius(3.87e1, 2.7, 2.6e7)
+        data = r.input_data
+        self.assertNear(data['rate-constant']['A'], 3.87e1)
+        self.assertNear(data['rate-constant']['b'], 2.7)
+        self.assertNear(data['rate-constant']['Ea'], 2.6e7)
+        terms = data['equation'].split()
+        self.assertIn('O', terms)
+        self.assertIn('OH', terms)
+
     def test_elementary(self):
         r = ct.ElementaryReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
         r.rate = ct.Arrhenius(3.87e1, 2.7, 6260*1000*4.184)
@@ -1063,6 +1082,81 @@ class TestReaction(utilities.CanteraTest):
                 - [0.3177, 0.26889, 0.094806, -7.6385e-03]
                 - [-0.031285, -0.039412, 0.044375, 0.014458]''', gas)
 
+    def test_BlowersMasel(self):
+        r = ct.BlowersMaselReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
+        r.rate = ct.BlowersMasel(3.87e1, 2.7, 6260*1000*4.184, 1e9*1000*4.184)
+
+        gas1 = ct.Solution('BM_test.yaml')
+
+        gas2 = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
+                           species=gas1.species(), reactions=[r])
+
+        gas1.TP = self.gas.TP
+        gas2.TP = self.gas.TP
+        gas1.X = 'H2:0.1, H2O:0.2, O2:0.7, O:1e-4, OH:1e-5, H:2e-5'
+        gas2.X = 'H2:0.1, H2O:0.2, O2:0.7, O:1e-4, OH:1e-5, H:2e-5'
+
+        self.assertNear(gas2.forward_rate_constants[0],
+                        gas1.forward_rate_constants[0], rtol=1e-7)
+        self.assertNear(gas2.net_rates_of_progress[0],
+                        gas1.net_rates_of_progress[0], rtol=1e-7)
+
+    def test_Blowers_Masel_rate(self):
+        gas = ct.Solution('BM_test.yaml')
+        R = gas.reaction(0)
+        self.assertNear(R.rate(gas.T, gas.delta_enthalpy[0]),
+                        gas.forward_rate_constants[0], rtol=1e-7)
+
+    def test_negative_A_blowersmasel(self):
+        species = ct.Solution('BM_test.yaml').species()
+        r = ct.BlowersMaselReaction({'O':1, 'H2':1}, {'H':1, 'OH':1})
+        r.rate = ct.BlowersMasel(-3.87e1, 2.7, 6260*1000*4.184, 1e9)
+
+        self.assertFalse(r.allow_negative_pre_exponential_factor)
+
+        with self.assertRaisesRegex(ct.CanteraError, 'negative pre-exponential'):
+            gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
+                              species=species, reactions=[r])
+
+        r.allow_negative_pre_exponential_factor = True
+        gas = ct.Solution(thermo='IdealGas', kinetics='GasKinetics',
+                          species=species, reactions=[r])
+
+    def test_Blowers_Masel_change_enthalpy(self):
+        gas = ct.Solution('BM_test.yaml')
+        r = gas.reaction(0)
+        E0 = r.rate.intrinsic_activation_energy
+        w = r.rate.bond_energy
+        A = r.rate.pre_exponential_factor
+        b = r.rate.temperature_exponent
+        vp = 2 * w * (w+E0) / (w - E0)
+        deltaH = gas.delta_enthalpy[0]
+        E = ((w + deltaH / 2) * (vp - 2 * w + deltaH) ** 2 /
+            (vp ** 2 - 4 * w ** 2 + deltaH ** 2))
+        self.assertNear(E, gas.reaction(0).rate.activation_energy(deltaH))
+
+        deltaH_high = 10 * gas.reaction(0).rate.intrinsic_activation_energy
+        deltaH_low = -20 * gas.reaction(0).rate.intrinsic_activation_energy
+        index = gas.species_index('OH')
+        species = gas.species('OH')
+        perturbed_coeffs = species.thermo.coeffs.copy()
+        perturbed_coeffs[6] += deltaH_high / ct.gas_constant
+        perturbed_coeffs[13] += deltaH_high / ct.gas_constant
+        species.thermo = ct.NasaPoly2(species.thermo.min_temp, species.thermo.max_temp,
+                            species.thermo.reference_pressure, perturbed_coeffs)
+        gas.modify_species(index, species)
+        self.assertEqual(deltaH_high, gas.reaction(0).rate.activation_energy(deltaH_high))
+        self.assertNear(A*gas.T**b*np.exp(-deltaH_high/ct.gas_constant/gas.T), gas.forward_rate_constants[0])
+
+        perturbed_coeffs = species.thermo.coeffs.copy()
+        perturbed_coeffs[6] += deltaH_low / ct.gas_constant
+        perturbed_coeffs[13] += deltaH_low / ct.gas_constant
+        species.thermo = ct.NasaPoly2(species.thermo.min_temp, species.thermo.max_temp,
+                            species.thermo.reference_pressure, perturbed_coeffs)
+        gas.modify_species(index, species)
+        self.assertEqual(0, gas.reaction(0).rate.activation_energy(deltaH_low))
+        self.assertNear(A*gas.T**b*np.exp(0/ct.gas_constant/gas.T), gas.forward_rate_constants[0])
+
     def test_interface(self):
         surf_species = ct.Species.listFromFile('ptcombust.xml')
         gas = ct.Solution('ptcombust.xml', 'gas')
@@ -1087,6 +1181,35 @@ class TestReaction(utilities.CanteraTest):
             self.assertNear(surf1.forward_rate_constants[1],
                             surf2.forward_rate_constants[0])
             self.assertNear(surf1.net_rates_of_progress[1],
+                            surf2.net_rates_of_progress[0])
+
+    def test_BlowersMaselinterface(self):
+        gas = ct.Solution('gri30.yaml')
+        gas.TPX = 300, ct.one_atm, {"CH4": 0.095, "O2": 0.21, "AR": 0.79}
+        surf1 = ct.Interface('BM_test.yaml', 'Pt_surf', [gas])
+        r1 = ct.BlowersMaselInterfaceReaction()
+        r1.reactants = 'H(S):2'
+        r1.products = 'H2:1, PT(S):2'
+        r1.rate = ct.BlowersMasel(3.7e20, 0, 67.4e6, 1e9)
+        r1.coverage_deps = {'H(S)': (0, 0, -6e6)}
+
+        self.assertNear(r1.coverage_deps['H(S)'][2], -6e6)
+
+        surf_species = []
+        for species in surf1.species():
+            surf_species.append(species)
+        surf2 = ct.Interface(thermo='Surface', species=surf_species,
+                             kinetics='interface', reactions=[r1], adjacent=[gas])
+
+        surf2.site_density = surf1.site_density
+        surf1.coverages = surf2.coverages = 'PT(S):0.7, H(S):0.3'
+        gas.TP = surf2.TP = surf1.TP
+
+        for T in [300, 500, 1500]:
+            gas.TP = surf1.TP = surf2.TP = T, 5*ct.one_atm
+            self.assertNear(surf1.forward_rate_constants[0],
+                            surf2.forward_rate_constants[0])
+            self.assertNear(surf1.net_rates_of_progress[0],
                             surf2.net_rates_of_progress[0])
 
     def test_modify_invalid(self):
@@ -1195,6 +1318,28 @@ class TestReaction(utilities.CanteraTest):
         kf = gas.forward_rate_constants
         self.assertNear(kf[4], kf[5])
 
+    def test_modify_BlowersMasel(self):
+        gas = ct.Solution('BM_test.yaml')
+        gas.X = 'H2:0.1, H2O:0.2, O2:0.7, O:1e-4, OH:1e-5, H:2e-5'
+        gas.TP = self.gas.TP
+        R = gas.reaction(0)
+        A1 = R.rate.pre_exponential_factor
+        b1 = R.rate.temperature_exponent
+        Ta1 = R.rate.activation_energy(gas.delta_enthalpy[0]) / ct.gas_constant
+        T = gas.T
+        self.assertNear(A1* T ** b1 * np.exp(- Ta1 / T),
+                        gas.forward_rate_constants[0])
+
+        # randomly modify the rate parameters of a Blowers-Masel reaction
+        A2 = 1.5 * A1
+        b2 = b1 + 0.1
+        Ta_intrinsic = R.rate.intrinsic_activation_energy * 1.2
+        w = R.rate.bond_energy * 0.8
+        R.rate = ct.BlowersMasel(A2, b2, Ta_intrinsic, w)
+        Ta2 = R.rate.activation_energy(gas.delta_enthalpy[0]) / ct.gas_constant
+        gas.modify_reaction(0, R)
+        self.assertNear(A2*T**b2*np.exp(-Ta2/T), gas.forward_rate_constants[0])
+
     def test_modify_interface(self):
         gas = ct.Solution('ptcombust.xml', 'gas')
         surf = ct.Interface('ptcombust.xml', 'Pt_surf', [gas])
@@ -1253,3 +1398,70 @@ class TestReaction(utilities.CanteraTest):
 
         # M&W toggled on (locally) for reaction 9
         self.assertNear(2.0 * k1[9], k2[9]) # sticking coefficient = 1.0
+
+    def test_modify_BMinterface(self):
+        gas = ct.Solution('gri30.yaml')
+        gas.TPX = 300, ct.one_atm, {"CH4": 0.095, "O2": 0.21, "AR": 0.79}
+        surf = ct.Interface('BM_test.yaml', 'Pt_surf', [gas])
+        surf.coverages = 'O(S):0.1, PT(S):0.5, H(S):0.4'
+        gas.TP = surf.TP
+
+        R = surf.reaction(0)
+        R.coverage_deps = {'O(S)': (0.0, 0.0, -3e6)}
+        surf.modify_reaction(0, R)
+
+        # Rate constant should now be independent of H(S) coverage, but
+        # dependent on O(S) coverage
+        Ek = surf.reaction(0).coverage_deps['O(S)'][-1]
+        k1 = surf.forward_rate_constants[0]
+        O2_theta_k1 = surf.coverages[-1]
+        surf.coverages = 'O(S):0.2, PT(S):0.4, H(S):0.4'
+        k2 = surf.forward_rate_constants[0]
+        O2_theta_k2 = surf.coverages[-1]
+        O2_delta_theta_k = O2_theta_k1 - O2_theta_k2
+        surf.coverages = 'O(S):0.2, PT(S):0.6, H(S):0.2'
+        k3 = surf.forward_rate_constants[0]
+
+        self.assertNear(k1 / k2, np.exp(-O2_delta_theta_k * Ek / ct.gas_constant / surf.T))
+        self.assertNear(k2, k3)
+
+    def test_modify_BMsticking(self):
+        gas = ct.Solution('gri30.yaml')
+        gas.TPX = 300, ct.one_atm, {"CH4": 0.095, "O2": 0.21, "AR": 0.79}
+        surf = ct.Interface('BM_test.yaml', 'Pt_surf', [gas])
+        surf.coverages = 'O(S):0.1, PT(S):0.5, H(S):0.4'
+        gas.TP = surf.TP
+
+        R = surf.reaction(1)
+        R.rate = ct.BlowersMasel(0.25, 0, 0, 1000000) # original sticking coefficient = 1.0
+
+        k1 = surf.forward_rate_constants[1]
+        surf.modify_reaction(1, R)
+        k2 = surf.forward_rate_constants[1]
+        self.assertNear(k1, 4*k2)
+
+    def test_BMmotz_wise(self):
+        # Motz & Wise off for all reactions
+        gas1 = ct.Solution('gri30.yaml')
+        gas1.TPX = 300, ct.one_atm, {"CH4": 0.095, "O2": 0.21, "AR": 0.79}
+        surf1 = ct.Interface('BM_test.yaml', 'Pt_surf', [gas1])
+        surf1.coverages = 'O(S):0.1, PT(S):0.5, H(S):0.4'
+        gas1.TP = surf1.TP
+
+        # Motz & Wise correction on for some reactions
+        gas2 = ct.Solution('BM-ptcombust-Motz-Wise.yaml', 'gas')
+        surf2 = ct.Interface('BM-ptcombust-Motz-Wise.yaml', 'Pt_surf', [gas2])
+        surf2.TPY = surf1.TPY
+
+        k1 = surf1.forward_rate_constants
+        k2 = surf2.forward_rate_constants
+
+        # M&W toggled on (globally) for reactions 2 and 7
+        self.assertNear(2.0 * k1[1], k2[1]) # sticking coefficient = 1.0
+        self.assertNear(1.6 * k1[2], k2[2]) # sticking coefficient = 0.75
+
+        # M&W toggled off (locally) for reaction 4
+        self.assertNear(k1[3], k2[3])
+
+        # M&W toggled on (locally) for reaction 5
+        self.assertNear(2.0 * k1[4], k2[4]) # sticking coefficient = 1.0

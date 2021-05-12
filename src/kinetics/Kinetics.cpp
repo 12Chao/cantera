@@ -10,10 +10,12 @@
 // at https://cantera.org/license.txt for license and copyright information.
 
 #include "cantera/kinetics/Kinetics.h"
+#include "cantera/kinetics/KineticsFactory.h"
 #include "cantera/kinetics/Reaction.h"
 #include "cantera/thermo/ThermoPhase.h"
 #include "cantera/base/stringUtils.h"
 #include "cantera/base/utilities.h"
+#include "cantera/base/global.h"
 #include <unordered_set>
 
 using namespace std;
@@ -115,7 +117,7 @@ std::pair<size_t, size_t> Kinetics::checkDuplicates(bool throw_err) const
                 unmatched_duplicates.erase(i);
                 unmatched_duplicates.erase(m);
                 continue;
-            } else if (R.reaction_type != other.reaction_type) {
+            } else if (R.type() != other.type()) {
                 continue; // different reaction types
             }
             doublereal c = checkDuplicateStoich(net_stoich[i], net_stoich[m]);
@@ -123,8 +125,8 @@ std::pair<size_t, size_t> Kinetics::checkDuplicates(bool throw_err) const
                 continue; // stoichiometries differ (not by a multiple)
             } else if (c < 0.0 && !R.reversible && !other.reversible) {
                 continue; // irreversible reactions in opposite directions
-            } else if (R.reaction_type == FALLOFF_RXN ||
-                       R.reaction_type == CHEMACT_RXN) {
+            } else if (R.type() == "falloff" ||
+                       R.type() == "chemically-activated") {
                 ThirdBody& tb1 = dynamic_cast<FalloffReaction&>(R).third_body;
                 ThirdBody& tb2 = dynamic_cast<FalloffReaction&>(other).third_body;
                 bool thirdBodyOk = true;
@@ -140,7 +142,7 @@ std::pair<size_t, size_t> Kinetics::checkDuplicates(bool throw_err) const
                 if (thirdBodyOk) {
                     continue; // No overlap in third body efficiencies
                 }
-            } else if (R.reaction_type == THREE_BODY_RXN) {
+            } else if (R.type() == "three-body") {
                 ThirdBody& tb1 = dynamic_cast<ThreeBodyReaction&>(R).third_body;
                 ThirdBody& tb2 = dynamic_cast<ThreeBodyReaction&>(other).third_body;
                 bool thirdBodyOk = true;
@@ -370,9 +372,16 @@ double Kinetics::productStoichCoeff(size_t kSpec, size_t irxn) const
 }
 
 int Kinetics::reactionType(size_t i) const {
+    warn_deprecated("Kinetics::reactionType()",
+        "To be changed after Cantera 2.6. "
+        "Return string instead of magic number; use "
+        "Kinetics::reactionTypeStr during transition.");
     return m_reactions[i]->reaction_type;
 }
 
+std::string Kinetics::reactionTypeStr(size_t i) const {
+    return m_reactions[i]->type();
+}
 
 std::string Kinetics::reactionString(size_t i) const
 {
@@ -485,6 +494,19 @@ void Kinetics::addPhase(ThermoPhase& thermo)
     resizeSpecies();
 }
 
+AnyMap Kinetics::parameters()
+{
+    AnyMap out;
+    string name = KineticsFactory::factory()->canonicalize(kineticsType());
+    if (name != "none") {
+        out["kinetics"] = name;
+        if (nReactions() == 0) {
+            out["reactions"] = "none";
+        }
+    }
+    return out;
+}
+
 void Kinetics::resizeSpecies()
 {
     m_kk = 0;
@@ -550,6 +572,12 @@ bool Kinetics::addReaction(shared_ptr<Reaction> r)
         }
     }
 
+    // For reactions created outside the context of a Kinetics object, the units
+    // of the rate coefficient can't be determined in advance. Do that here.
+    if (r->rate_units.factor() == 0) {
+        r->calculateRateCoeffUnits(*this);
+    }
+
     checkReactionBalance(*r);
     size_t irxn = nReactions(); // index of the new reaction
 
@@ -606,6 +634,7 @@ bool Kinetics::addReaction(shared_ptr<Reaction> r)
     m_ropr.push_back(0.0);
     m_ropnet.push_back(0.0);
     m_perturb.push_back(1.0);
+    m_dH.push_back(0.0);
     return true;
 }
 
@@ -613,10 +642,10 @@ void Kinetics::modifyReaction(size_t i, shared_ptr<Reaction> rNew)
 {
     checkReactionIndex(i);
     shared_ptr<Reaction>& rOld = m_reactions[i];
-    if (rNew->reaction_type != rOld->reaction_type) {
+    if (rNew->type() != rOld->type()) {
         throw CanteraError("Kinetics::modifyReaction",
             "Reaction types are different: {} != {}.",
-            rOld->reaction_type, rNew->reaction_type);
+            rOld->type(), rNew->type());
     }
 
     if (rNew->reactants != rOld->reactants) {

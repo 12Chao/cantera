@@ -1,5 +1,6 @@
 from os.path import join as pjoin
 import os
+import sys
 
 import numpy as np
 from collections import OrderedDict
@@ -422,3 +423,170 @@ class TestRestorePureFluid(utilities.CanteraTest):
         b = ct.SolutionArray(self.water)
         b.restore_data(data)
         check(a, b)
+
+
+class TestSolutionSerialization(utilities.CanteraTest):
+    def test_input_data_simple(self):
+        gas = ct.Solution('h2o2.yaml')
+        data = gas.input_data
+        self.assertEqual(data['name'], 'ohmech')
+        self.assertEqual(data['thermo'], 'ideal-gas')
+        self.assertEqual(data['kinetics'], 'gas')
+        self.assertEqual(data['transport'], 'mixture-averaged')
+
+    def test_input_data_state(self):
+        gas = ct.Solution('h2o2.yaml')
+        data = gas.input_data
+        self.assertEqual(gas.T, data['state']['T'])
+        self.assertEqual(gas.density, data['state']['density'])
+
+        gas.TP = 500, 3.14e5
+        data = gas.input_data
+        self.assertEqual(gas.T, data['state']['T'])
+        self.assertEqual(gas.density, data['state']['density'])
+
+    def test_input_data_custom(self):
+        gas = ct.Solution('ideal-gas.yaml')
+        data = gas.input_data
+        self.assertEqual(data['custom-field']['first'], True)
+        self.assertEqual(data['custom-field']['last'], [100, 200, 300])
+
+        if sys.version_info >= (3,7):
+            # Check that items are ordered as expected
+            self.assertEqual(
+                list(data),
+                ['name', 'thermo', 'elements', 'species', 'state', 'custom-field']
+            )
+            self.assertEqual(
+                list(data['custom-field']),
+                ['first', 'second', 'last']
+            )
+
+    def test_input_data_debye_huckel(self):
+        soln = ct.Solution('thermo-models.yaml', 'debye-huckel-B-dot-ak')
+        data = soln.input_data
+        self.assertEqual(data['thermo'], 'Debye-Huckel')
+        act_data = data['activity-data']
+        self.assertEqual(act_data['model'], 'B-dot-with-variable-a')
+        self.assertEqual(act_data['default-ionic-radius'], 4e-10)
+        self.assertNotIn('kinetics', data)
+        self.assertNotIn('transport', data)
+
+    def test_yaml_simple(self):
+        gas = ct.Solution('h2o2.yaml')
+        gas.TPX = 500, ct.one_atm, 'H2: 1.0, O2: 1.0'
+        gas.equilibrate('HP')
+        gas.TP = 1500, ct.one_atm
+        gas.write_yaml('h2o2-generated.yaml')
+        with open('h2o2-generated.yaml', 'r') as infile:
+            generated = yaml.safe_load(infile)
+        for key in ('generator', 'date', 'phases', 'species', 'reactions'):
+            self.assertIn(key, generated)
+        self.assertEqual(generated['phases'][0]['transport'], 'mixture-averaged')
+        for i, species in enumerate(generated['species']):
+            self.assertEqual(species['composition'], gas.species(i).composition)
+        for i, reaction in enumerate(generated['reactions']):
+            self.assertEqual(reaction['equation'], gas.reaction_equation(i))
+
+        gas2 = ct.Solution("h2o2-generated.yaml")
+        self.assertArrayNear(gas.concentrations, gas2.concentrations)
+        self.assertArrayNear(gas.partial_molar_enthalpies,
+                             gas2.partial_molar_enthalpies)
+        self.assertArrayNear(gas.forward_rate_constants,
+                             gas2.forward_rate_constants)
+        self.assertArrayNear(gas.mix_diff_coeffs, gas2.mix_diff_coeffs)
+
+    def test_yaml_outunits(self):
+        gas = ct.Solution('h2o2.yaml')
+        gas.TPX = 500, ct.one_atm, 'H2: 1.0, O2: 1.0'
+        gas.equilibrate('HP')
+        gas.TP = 1500, ct.one_atm
+        units = {'length': 'cm', 'quantity': 'mol', 'energy': 'cal'}
+        gas.write_yaml('h2o2-generated.yaml', units=units)
+        with open('h2o2-generated.yaml') as infile:
+            generated = yaml.safe_load(infile)
+        with open(pjoin(self.cantera_data, "h2o2.yaml")) as infile:
+            original = yaml.safe_load(infile)
+        self.assertEqual(generated['units'], units)
+
+        for r1, r2 in zip(original['reactions'], generated['reactions']):
+            if 'rate-constant' in r1:
+                self.assertNear(r1['rate-constant']['A'], r2['rate-constant']['A'])
+                self.assertNear(r1['rate-constant']['Ea'], r2['rate-constant']['Ea'])
+
+        gas2 = ct.Solution("h2o2-generated.yaml")
+        self.assertArrayNear(gas.concentrations, gas2.concentrations)
+        self.assertArrayNear(gas.partial_molar_enthalpies,
+                             gas2.partial_molar_enthalpies)
+        self.assertArrayNear(gas.forward_rate_constants,
+                             gas2.forward_rate_constants)
+        self.assertArrayNear(gas.mix_diff_coeffs, gas2.mix_diff_coeffs)
+
+    def test_yaml_surface(self):
+        gas = ct.Solution('ptcombust.yaml', 'gas')
+        surf = ct.Interface('ptcombust.yaml', 'Pt_surf', [gas])
+        gas.TPY = 900, ct.one_atm, np.ones(gas.n_species)
+        surf.coverages = np.ones(surf.n_species)
+        surf.write_yaml('ptcombust-generated.yaml')
+
+        with open('ptcombust-generated.yaml') as infile:
+            generated = yaml.safe_load(infile)
+        for key in ('phases', 'species', 'gas-reactions', 'Pt_surf-reactions'):
+            self.assertIn(key, generated)
+        self.assertEqual(len(generated['gas-reactions']), gas.n_reactions)
+        self.assertEqual(len(generated['Pt_surf-reactions']), surf.n_reactions)
+        self.assertEqual(len(generated['species']), surf.n_total_species)
+
+        gas2 = ct.Solution('ptcombust-generated.yaml', 'gas')
+        surf2 = ct.Solution('ptcombust-generated.yaml', 'Pt_surf', [gas2])
+        self.assertArrayNear(surf.concentrations, surf2.concentrations)
+        self.assertArrayNear(surf.partial_molar_enthalpies,
+                             surf2.partial_molar_enthalpies)
+        self.assertArrayNear(surf.forward_rate_constants,
+                             surf2.forward_rate_constants)
+
+    def test_yaml_eos(self):
+        ice = ct.Solution('water.yaml', 'ice')
+        ice.TP = 270, 2 * ct.one_atm
+        ice.write_yaml('ice-generated.yaml', units={'length': 'mm', 'mass': 'g'})
+
+        ice2 = ct.Solution('ice-generated.yaml')
+        self.assertNear(ice.density, ice2.density)
+        self.assertNear(ice.entropy_mole, ice2.entropy_mole)
+
+    def test_yaml_inconsistent_species(self):
+        gas = ct.Solution('h2o2.yaml')
+        gas2 = ct.Solution('h2o2.yaml')
+        gas2.name = 'modified'
+        # modify the NASA coefficients for one species
+        h2 = gas2.species('H2')
+        nasa_coeffs = h2.thermo.coeffs
+        nasa_coeffs[1] += 0.1
+        nasa_coeffs[8] += 0.1
+        h2.thermo = ct.NasaPoly2(h2.thermo.min_temp, h2.thermo.max_temp,
+                                 h2.thermo.reference_pressure, nasa_coeffs)
+        gas2.modify_species(gas2.species_index('H2'), h2)
+        with self.assertRaisesRegex(ct.CanteraError, "different definitions"):
+            gas.write_yaml('h2o2-error.yaml', phases=gas2)
+
+
+class TestSpeciesSerialization(utilities.CanteraTest):
+    def test_species_simple(self):
+        gas = ct.Solution('h2o2.yaml')
+        data = gas.species('H2O').input_data
+        self.assertEqual(data['name'], 'H2O')
+        self.assertEqual(data['composition'], {'H': 2, 'O': 1})
+
+    def test_species_thermo(self):
+        gas = ct.Solution('h2o2.yaml')
+        data = gas.species('H2O').input_data['thermo']
+        self.assertEqual(data['model'], 'NASA7')
+        self.assertEqual(data['temperature-ranges'], [200, 1000, 3500])
+        self.assertEqual(data['note'], 'L8/89')
+
+    def test_species_transport(self):
+        gas = ct.Solution('h2o2.yaml')
+        data = gas.species('H2O').input_data['transport']
+        self.assertEqual(data['model'], 'gas')
+        self.assertEqual(data['geometry'], 'nonlinear')
+        self.assertNear(data['dipole'], 1.844)

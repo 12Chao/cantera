@@ -8,6 +8,7 @@
 #include "cantera/base/yaml.h"
 #include "cantera/base/stringUtils.h"
 #include "cantera/base/global.h"
+#include "cantera/base/utilities.h"
 #ifdef CT_USE_DEMANGLE
   #include <boost/core/demangle.hpp>
 #endif
@@ -18,10 +19,14 @@
 #include <unordered_set>
 
 namespace ba = boost::algorithm;
+using std::vector;
+using std::string;
 
 namespace { // helper functions
 
 std::mutex yaml_cache_mutex;
+std::mutex yaml_field_order_mutex;
+using namespace Cantera;
 
 bool isFloat(const std::string& val)
 {
@@ -138,6 +143,67 @@ Type elementTypes(const YAML::Node& node)
     return types;
 }
 
+long int getPrecision(const Cantera::AnyValue& precisionSource)
+{
+    long int precision = 15;
+    auto& userPrecision = precisionSource.getMetadata("precision");
+    if (userPrecision.is<long int>()) {
+        precision = userPrecision.asInt();
+    }
+    return precision;
+}
+
+string formatDouble(double x, long int precision)
+{
+    int log10x = static_cast<int>(std::floor(std::log10(std::abs(x))));
+    if (x == 0.0) {
+        return "0.0";
+    } else if (log10x >= -2 && log10x <= 3) {
+        // Adjust precision to account for leading zeros or digits left of the
+        // decimal point
+        precision -= log10x;
+        string s = fmt::format("{:.{}f}", x, precision);
+        // Trim trailing zeros, keeping at least one digit to the right of
+        // the decimal point
+        size_t last = s.size() - 1;
+        for (; last != 0; last--) {
+            if (s[last] != '0' || s[last-1] == '.') {
+                break;
+            }
+        }
+        s.resize(last + 1);
+        return s;
+    } else {
+        string s = fmt::format("{:.{}e}", x, precision);
+        // Trim trailing zeros, keeping at least one digit to the right of
+        // the decimal point
+        size_t eloc = s.find('e');
+        size_t last = eloc - 1;
+        for (; last != 0; last--) {
+            if (s[last] != '0' || s[last-1] == '.') {
+                break;
+            }
+        }
+        if (last != eloc - 1) {
+            s = string(s, 0, last + 1) + string(s.begin() + eloc, s.end());
+        }
+        return s;
+    }
+}
+
+struct Quantity
+{
+    AnyValue value;
+    Units units;
+    bool isActivationEnergy;
+    AnyValue::unitConverter converter;
+
+    bool operator==(const Quantity& other) const {
+    return value == other.value && units == other.units
+            && isActivationEnergy == other.isActivationEnergy;
+    }
+};
+
 Cantera::AnyValue Empty;
 
 } // end anonymous namespace
@@ -151,6 +217,7 @@ struct convert<Cantera::AnyMap> {
     static Node encode(const Cantera::AnyMap& rhs) {
         throw NotImplementedError("AnyMap::encode");
     }
+
     static bool decode(const Node& node, Cantera::AnyMap& target) {
         target.setLoc(node.Mark().line, node.Mark().column);
         if (node.IsSequence()) {
@@ -168,22 +235,177 @@ struct convert<Cantera::AnyMap> {
         for (const auto& child : node) {
             std::string key = child.first.as<std::string>();
             const auto& loc = child.second.Mark();
-            target[key].setLoc(loc.line, loc.column);
+            AnyValue& value = target.createForYaml(key, loc.line, loc.column);
             if (child.second.IsMap()) {
-                target[key] = child.second.as<AnyMap>();
+                value = child.second.as<AnyMap>();
             } else {
-                target[key] = child.second.as<AnyValue>();
-                target[key].setKey(key);
+                value = child.second.as<AnyValue>();
+                value.setKey(key);
             }
         }
         return true;
     }
 };
 
+YAML::Emitter& operator<<(YAML::Emitter& out, const AnyMap& rhs)
+{
+    bool flow = rhs.getBool("__flow__", false);
+    if (flow) {
+        out << YAML::Flow;
+        out << YAML::BeginMap;
+        size_t width = 15;
+        for (const auto& item : rhs.ordered()) {
+            const auto& name = item.first;
+            const auto& value = item.second;
+            string valueStr;
+            bool foundType = true;
+            if (value.is<double>()) {
+                valueStr = formatDouble(value.asDouble(),
+                                     getPrecision(value));
+            } else if (value.is<string>()) {
+                valueStr = value.asString();
+            } else if (value.is<long int>()) {
+                valueStr = fmt::format("{}", value.asInt());
+            } else if (value.is<bool>()) {
+                valueStr = fmt::format("{}", value.asBool());
+            } else {
+                foundType = false;
+            }
+
+            if (foundType) {
+                if (width + name.size() + valueStr.size() + 4 > 79) {
+                    out << YAML::Newline;
+                    width = 15;
+                }
+                out << name;
+                out << valueStr;
+                width += name.size() + valueStr.size() + 4;
+            } else {
+                // Put items of an unknown (compound) type on a line alone
+                out << YAML::Newline;
+                out << name;
+                out << value;
+                width = 99; // Force newline after this item as well
+            }
+        }
+    } else {
+        out << YAML::BeginMap;
+        for (const auto& item : rhs.ordered()) {
+            out << item.first;
+            out << item.second;
+        }
+    }
+    out << YAML::EndMap;
+    return out;
+}
+
+void emitFlowVector(YAML::Emitter& out, const vector<double>& v, long int precision)
+{
+    out << YAML::Flow;
+    out << YAML::BeginSeq;
+    size_t width = 15; // wild guess, but no better value is available
+    for (auto& x : v) {
+        string xstr = formatDouble(x, precision);
+        if (width + xstr.size() > 79) {
+            out << YAML::Newline;
+            width = 15;
+        }
+        out << xstr;
+        width += xstr.size() + 2;
+    }
+    out << YAML::EndSeq;
+}
+
+template <typename T>
+void emitFlowVector(YAML::Emitter& out, const vector<T>& v)
+{
+    out << YAML::Flow;
+    out << YAML::BeginSeq;
+    size_t width = 15; // wild guess, but no better value is available
+    for (const auto& x : v) {
+        string xstr = fmt::format("{}", x);
+        if (width + xstr.size() > 79) {
+            out << YAML::Newline;
+            width = 15;
+        }
+        out << xstr;
+        width += xstr.size() + 2;
+    }
+    out << YAML::EndSeq;
+}
+
+YAML::Emitter& operator<<(YAML::Emitter& out, const AnyValue& rhs)
+{
+    if (rhs.isScalar()) {
+        if (rhs.is<string>()) {
+            out << rhs.asString();
+        } else if (rhs.is<double>()) {
+            out << formatDouble(rhs.asDouble(), getPrecision(rhs));
+        } else if (rhs.is<long int>()) {
+            out << rhs.asInt();
+        } else if (rhs.is<bool>()) {
+            out << rhs.asBool();
+        } else {
+            throw CanteraError("operator<<(YAML::Emitter&, AnyValue&)",
+                "Don't know how to encode value of type '{}' with key '{}'",
+                rhs.type_str(), rhs.m_key);
+        }
+    } else if (rhs.is<AnyMap>()) {
+        out << rhs.as<AnyMap>();
+    } else if (rhs.is<vector<AnyMap>>()) {
+        out << rhs.asVector<AnyMap>();
+    } else if (rhs.is<vector<double>>()) {
+        emitFlowVector(out, rhs.asVector<double>(), getPrecision(rhs));
+    } else if (rhs.is<vector<string>>()) {
+        emitFlowVector(out, rhs.asVector<string>());
+    } else if (rhs.is<vector<long int>>()) {
+        emitFlowVector(out, rhs.asVector<long int>());
+    } else if (rhs.is<vector<bool>>()) {
+        emitFlowVector(out, rhs.asVector<bool>());
+    } else if (rhs.is<vector<Cantera::AnyValue>>()) {
+        out << rhs.asVector<Cantera::AnyValue>();
+    } else if (rhs.is<vector<vector<double>>>()) {
+        const auto& v = rhs.asVector<vector<double>>();
+        long int precision = getPrecision(rhs);
+        out << YAML::BeginSeq;
+        for (const auto& u : v) {
+            emitFlowVector(out, u, precision);
+        }
+        out << YAML::EndSeq;
+    } else if (rhs.is<vector<vector<string>>>()) {
+        const auto& v = rhs.asVector<vector<string>>();
+        out << YAML::BeginSeq;
+        for (const auto& u : v) {
+            emitFlowVector(out, u);
+        }
+        out << YAML::EndSeq;
+    } else if (rhs.is<vector<vector<long int>>>()) {
+        const auto& v = rhs.asVector<vector<long int>>();
+        out << YAML::BeginSeq;
+        for (const auto& u : v) {
+            emitFlowVector(out, u);
+        }
+        out << YAML::EndSeq;
+    } else if (rhs.is<vector<vector<bool>>>()) {
+        const auto& v = rhs.asVector<vector<bool>>();
+        out << YAML::BeginSeq;
+        for (const auto& u : v) {
+            emitFlowVector(out, u);
+        }
+        out << YAML::EndSeq;
+    } else {
+        throw CanteraError("operator<<(YAML::Emitter&, AnyValue&)",
+            "Don't know how to encode value of type '{}' with key '{}'",
+            rhs.type_str(), rhs.m_key);
+    }
+    return out;
+}
+
+
 template<>
 struct convert<Cantera::AnyValue> {
     static Node encode(const Cantera::AnyValue& rhs) {
-       throw NotImplementedError("AnyValue::encode");
+        throw NotImplementedError("");
     }
 
     static bool decode(const Node& node, Cantera::AnyValue& target) {
@@ -236,9 +458,9 @@ struct convert<Cantera::AnyValue> {
                     target = node.as<std::vector<std::vector<long int>>>();
                 } else if (subtypes == (Type::Integer | Type::Double) || subtypes == Type::Double) {
                     target = node.as<std::vector<std::vector<double>>>();
-                } else if (types == Type::String) {
+                } else if (subtypes == Type::String) {
                     target = node.as<std::vector<std::vector<std::string>>>();
-                } else if (types == Type::Bool) {
+                } else if (subtypes == Type::Bool) {
                     target = node.as<std::vector<std::vector<bool>>>();
                 } else {
                     target = node.as<std::vector<AnyValue>>();
@@ -261,8 +483,7 @@ struct convert<Cantera::AnyValue> {
 
 }
 
-namespace Cantera
-{
+namespace Cantera {
 
 std::map<std::string, std::string> AnyValue::s_typenames = {
     {typeid(double).name(), "double"},
@@ -274,11 +495,14 @@ std::map<std::string, std::string> AnyValue::s_typenames = {
 
 std::unordered_map<std::string, std::pair<AnyMap, int>> AnyMap::s_cache;
 
+std::unordered_map<std::string, std::vector<std::string>> AnyMap::s_headFields;
+std::unordered_map<std::string, std::vector<std::string>> AnyMap::s_tailFields;
+
 // Methods of class AnyBase
 
 AnyBase::AnyBase()
     : m_line(-1)
-    , m_column(-1)
+    , m_column(0)
 {}
 
 void AnyBase::setLoc(int line, int column)
@@ -326,7 +550,7 @@ AnyValue& AnyValue::operator=(AnyValue const& other) {
     if (this == &other) {
         return *this;
     }
-    AnyBase::operator=(*this);
+    AnyBase::operator=(other);
     m_key = other.m_key;
     m_value.reset(new boost::any{*other.m_value});
     m_equals = other.m_equals;
@@ -448,6 +672,50 @@ bool operator==(const std::string& lhs, const AnyValue& rhs)
 bool operator!=(const std::string& lhs, const AnyValue& rhs)
 {
     return rhs != lhs;
+}
+
+// Specialization for "Quantity"
+
+void AnyValue::setQuantity(double value, const std::string& units, bool is_act_energy) {
+    *m_value = Quantity{AnyValue(value), Units(units), is_act_energy};
+    m_equals = eq_comparer<Quantity>;
+}
+
+void AnyValue::setQuantity(double value, const Units& units) {
+    *m_value = Quantity{AnyValue(value), units, false};
+    m_equals = eq_comparer<Quantity>;
+}
+
+void AnyValue::setQuantity(const vector_fp& values, const std::string& units) {
+    AnyValue v;
+    v = values;
+    *m_value = Quantity{v, Units(units), false};
+    m_equals = eq_comparer<Quantity>;
+}
+
+void AnyValue::setQuantity(const AnyValue& value, const unitConverter& converter)
+{
+    *m_value = Quantity{value, Units(0.0), false, converter};
+    m_equals = eq_comparer<Quantity>;
+}
+
+template<>
+bool AnyValue::is<vector<double>>() const
+{
+    if (m_value->type() == typeid(vector<double>)) {
+        return true;
+    } else if (m_value->type() == typeid(vector<AnyValue>)) {
+        for (const auto& item : as<vector<AnyValue>>()) {
+            if (!(item.is<double>()
+                || (item.is<Quantity>() && item.as<Quantity>().value.is<double>())))
+            {
+                return false;
+            }
+        }
+        return true;
+    } else {
+        return false;
+    }
 }
 
 // Specializations for "double"
@@ -669,7 +937,8 @@ const AnyMap& AnyValue::getMapWhere(const std::string& key, const std::string& v
             "Key '{}' not found", m_key);
     } else {
         throw InputFileError("AnyValue::getMapWhere", *this,
-            "Element is not a mapping or list of mappings");
+            "Element is not a mapping or list of mappings.\n"
+            "Looking for a mapping with key '{}' = '{}'", key, value);
     }
 }
 
@@ -719,7 +988,8 @@ AnyMap& AnyValue::getMapWhere(const std::string& key, const std::string& value,
             "Key '{}' not found", m_key);
     } else {
         throw InputFileError("AnyValue::getMapWhere", *this,
-            "Element is not a mapping or list of mappings");
+            "Element is not a mapping or list of mappings.\n"
+            "Looking for a mapping with key '{}' = '{}'", key, value);
     }
 }
 
@@ -746,26 +1016,62 @@ bool AnyValue::hasMapWhere(const std::string& key, const std::string& value) con
     }
 }
 
-void AnyValue::applyUnits(const UnitSystem& units)
+std::pair<int, int> AnyValue::order() const
+{
+    return {m_line, m_column};
+}
+
+void AnyValue::applyUnits(shared_ptr<UnitSystem>& units)
 {
     if (is<AnyMap>()) {
+        AnyMap& m = as<AnyMap>();
+
+        if (m.getBool("__unconvertible__", false)) {
+            AnyMap delta = units->getDelta(UnitSystem());
+            if (delta.hasKey("length") || delta.hasKey("quantity")
+                || delta.hasKey("time"))
+            {
+                throw CanteraError("AnyValue::applyUnits", "AnyMap contains values"
+                    " that cannot be converted to non-default unit systems (probably"
+                    " reaction rates not associated with a Kinetics object)");
+            }
+        }
         // Units declaration applicable to this map
-        as<AnyMap>().applyUnits(units);
+        m.applyUnits(units);
     } else if (is<std::vector<AnyMap>>()) {
         auto& list = as<std::vector<AnyMap>>();
         if (list.size() && list[0].hasKey("units") && list[0].size() == 1) {
             // First item in the list is a units declaration, which applies to
             // the items in the list
-            UnitSystem newUnits = units;
-            newUnits.setDefaults(list[0]["units"].asMap<std::string>());
+            auto deltaUnits = list[0]["units"];
             list[0].m_data.erase("units");
             for (auto& item : list) {
-                // Any additional units declarations are errors
-                if (item.size() == 1 && item.hasKey("units")) {
-                    throw InputFileError("AnyValue::applyUnits", item,
-                        "Found units entry as not the first item in a list.");
+                if (item.hasKey("units")) {
+                    if (item.size() == 1) {
+                        // Any additional units declarations are errors
+                        throw InputFileError("AnyValue::applyUnits", item,
+                            "Found units entry as not the first item in a list.");
+                    } else {
+                        // Merge with a child units declaration
+                        auto& childUnits = item["units"].as<AnyMap>();
+                        for (auto& jtem : deltaUnits) {
+                            if (!childUnits.hasKey(jtem.first)) {
+                                childUnits[jtem.first] = jtem.second;
+                            }
+                        }
+                    }
+                } else if (item.hasKey("__units__")) {
+                    // Merge with a child units declaration
+                    auto& childUnits = item["__units__"].as<AnyMap>();
+                    for (auto& jtem : deltaUnits) {
+                        if (!childUnits.hasKey(jtem.first)) {
+                            childUnits[jtem.first] = jtem.second;
+                        }
+                    }
+                } else {
+                    item["__units__"] = deltaUnits;
                 }
-                item.applyUnits(newUnits);
+                item.applyUnits(units);
             }
             // Remove the "units" map after it has been applied
             list.erase(list.begin());
@@ -780,8 +1086,38 @@ void AnyValue::applyUnits(const UnitSystem& units)
                 item.applyUnits(units);
             }
         }
+    } else if (is<vector<AnyValue>>()) {
+        for (auto& v : as<vector<AnyValue>>()) {
+            v.applyUnits(units);
+        }
+    } else if (is<Quantity>()) {
+        auto& Q = as<Quantity>();
+        if (Q.converter) {
+            Q.converter(Q.value, *units);
+            *this = std::move(Q.value);
+        } else if (Q.value.is<double>()) {
+            if (Q.isActivationEnergy) {
+                *this = Q.value.as<double>() / units->convertActivationEnergyTo(1.0, Q.units);
+            } else {
+                *this = Q.value.as<double>() / units->convertTo(1.0, Q.units);
+            }
+        } else if (Q.value.is<vector_fp>()) {
+            double factor = 1.0 / units->convertTo(1.0, Q.units);
+            auto& old = Q.value.asVector<double>();
+            vector_fp converted(old.size());
+            scale(old.begin(), old.end(), converted.begin(), factor);
+            *this = std::move(converted);
+        } else {
+            throw CanteraError("AnyValue::applyUnits", "Don't know how to "
+                "convert Quantity with held type '{}' in key '{}'",
+                Q.value.type_str(), m_key);
+        }
     }
+}
 
+void AnyValue::setFlowStyle(bool flow)
+{
+    as<AnyMap>().setFlowStyle();
 }
 
 std::string AnyValue::demangle(const std::type_info& type) const
@@ -940,21 +1276,30 @@ std::vector<AnyMap>& AnyValue::asVector<AnyMap>(size_t nMin, size_t nMax)
 
 // Methods of class AnyMap
 
+AnyMap::AnyMap()
+    : m_units(new UnitSystem())
+{
+}
+
 AnyValue& AnyMap::operator[](const std::string& key)
 {
     const auto& iter = m_data.find(key);
     if (iter == m_data.end()) {
-        // Create a new key return it
+        // Create a new key to return
         // NOTE: 'insert' can be replaced with 'emplace' after support for
         // G++ 4.7 is dropped.
         AnyValue& value = m_data.insert({key, AnyValue()}).first->second;
         value.setKey(key);
         if (m_metadata) {
-            // Approximate location, useful mainly if this insertion is going to
-            // immediately result in an error that needs to be reported.
-            value.setLoc(m_line, m_column);
             value.propagateMetadata(m_metadata);
         }
+
+        // A pseudo-location used to set the ordering when outputting to
+        // YAML so nodes added this way will come before nodes from YAML,
+        // with insertion order preserved.
+        value.setLoc(-1, m_column);
+        m_column += 10;
+
         return value;
     } else {
         // Return an already-existing item
@@ -970,6 +1315,20 @@ const AnyValue& AnyMap::operator[](const std::string& key) const
         throw InputFileError("AnyMap::operator[]", *this,
             "Key '{}' not found.\nExisting keys: {}", key, keys_str());
     }
+}
+
+AnyValue& AnyMap::createForYaml(const std::string& key, int line, int column)
+{
+    // NOTE: 'insert' can be replaced with 'emplace' after support for
+    // G++ 4.7 is dropped.
+    AnyValue& value = m_data.insert({key, AnyValue()}).first->second;
+    value.setKey(key);
+    if (m_metadata) {
+        value.propagateMetadata(m_metadata);
+    }
+
+    value.setLoc(line, column);
+    return value;
 }
 
 const AnyValue& AnyMap::at(const std::string& key) const
@@ -995,6 +1354,15 @@ void AnyMap::erase(const std::string& key)
 void AnyMap::clear()
 {
     m_data.clear();
+}
+
+void AnyMap::update(const AnyMap& other, bool keepExisting)
+{
+    for (const auto& item : other) {
+        if (!keepExisting || !hasKey(item.first)) {
+            (*this)[item.first] = item.second;
+        }
+    }
 }
 
 std::string AnyMap::keys_str() const
@@ -1103,6 +1471,90 @@ AnyMap::Iterator& AnyMap::Iterator::operator++()
     return *this;
 }
 
+
+AnyMap::OrderedProxy::OrderedProxy(const AnyMap& data)
+    : m_data(&data)
+{
+    // Units always come first
+    if (m_data->hasKey("__units__") && m_data->at("__units__").as<AnyMap>().size()) {
+        m_units.reset(new std::pair<const string, AnyValue>{"units", m_data->at("__units__")});
+        m_units->second.setFlowStyle();
+        m_ordered.emplace_back(std::pair<int, int>{-2, 0}, m_units.get());
+    }
+
+    int head = 0; // sort key of the first programmatically-added item
+    int tail = 0; // sort key of the last programmatically-added item
+    for (auto& item : *m_data) {
+        const auto& order = item.second.order();
+        if (order.first == -1) { // Item is not from an input file
+            head = std::min(head, order.second);
+            tail = std::max(tail, order.second);
+        }
+        m_ordered.emplace_back(order, &item);
+    }
+    std::sort(m_ordered.begin(), m_ordered.end());
+
+    // Adjust sort keys for items that should moved to the beginning or end of
+    // the list
+    if (m_data->hasKey("__type__")) {
+        bool order_changed = false;
+        const auto& itemType = m_data->at("__type__").asString();
+        std::unique_lock<std::mutex> lock(yaml_field_order_mutex);
+        if (AnyMap::s_headFields.count(itemType)) {
+            for (const auto& key : AnyMap::s_headFields[itemType]) {
+                for (auto& item : m_ordered) {
+                    if (item.first.first >= 0) {
+                        // This and following items come from an input file and
+                        // should not be re-ordered
+                        break;
+                    }
+                    if (item.second->first == key) {
+                        item.first.second = --head;
+                        order_changed = true;
+                    }
+                }
+            }
+        }
+        if (AnyMap::s_tailFields.count(itemType)) {
+            for (const auto& key : AnyMap::s_tailFields[itemType]) {
+                for (auto& item : m_ordered) {
+                    if (item.first.first >= 0) {
+                        // This and following items come from an input file and
+                        // should not be re-ordered
+                        break;
+                    }
+                    if (item.second->first == key) {
+                        item.first.second = ++tail;
+                        order_changed = true;
+                    }
+                }
+            }
+        }
+
+        if (order_changed) {
+            std::sort(m_ordered.begin(), m_ordered.end());
+        }
+    }
+}
+
+AnyMap::OrderedIterator AnyMap::OrderedProxy::begin() const
+{
+    return OrderedIterator(m_ordered.begin(), m_ordered.end());
+}
+
+AnyMap::OrderedIterator AnyMap::OrderedProxy::end() const
+{
+    return OrderedIterator(m_ordered.end(), m_ordered.end());
+}
+
+AnyMap::OrderedIterator::OrderedIterator(
+    const AnyMap::OrderedProxy::OrderVector::const_iterator& start,
+    const AnyMap::OrderedProxy::OrderVector::const_iterator& stop)
+{
+    m_iter = start;
+    m_stop = stop;
+}
+
 bool AnyMap::operator==(const AnyMap& other) const
 {
     // First, make sure that 'other' has all of the non-hidden keys that are in
@@ -1126,16 +1578,58 @@ bool AnyMap::operator!=(const AnyMap& other) const
     return m_data != other.m_data;
 }
 
-void AnyMap::applyUnits(const UnitSystem& units) {
-    m_units = units;
+void AnyMap::applyUnits()
+{
+    applyUnits(m_units);
+}
 
+void AnyMap::applyUnits(shared_ptr<UnitSystem>& units) {
     if (hasKey("units")) {
-        m_units.setDefaults(at("units").asMap<std::string>());
+        m_data["__units__"] = std::move(m_data["units"]);
         m_data.erase("units");
+    }
+    if (hasKey("__units__")) {
+        m_units.reset(new UnitSystem(*units));
+        m_units->setDefaults(m_data["__units__"].asMap<std::string>());
+    } else {
+        m_units = units;
     }
     for (auto& item : m_data) {
         item.second.applyUnits(m_units);
     }
+}
+
+void AnyMap::setUnits(const UnitSystem& units)
+{
+    if (hasKey("__units__")) {
+        for (const auto& item : units.getDelta(*m_units)) {
+            m_data["__units__"][item.first] = item.second;
+        }
+    } else {
+        m_data["__units__"] = units.getDelta(*m_units);
+    }
+    m_units.reset(new UnitSystem(units));
+}
+
+void AnyMap::setFlowStyle(bool flow) {
+    (*this)["__flow__"] = flow;
+}
+
+bool AnyMap::addOrderingRules(const string& objectType,
+                             const vector<vector<string>>& specs)
+{
+    std::unique_lock<std::mutex> lock(yaml_field_order_mutex);
+    for (const auto& spec : specs) {
+        if (spec.at(0) == "head") {
+            s_headFields[objectType].push_back(spec.at(1));
+        } else if (spec.at(0) == "tail") {
+            s_tailFields[objectType].push_back(spec.at(1));
+        } else {
+            throw CanteraError("AnyMap::addOrderingRules",
+                "Unknown ordering rule '{}'", spec.at(0));
+        }
+    }
+    return true;
 }
 
 AnyMap AnyMap::fromYamlString(const std::string& yaml) {
@@ -1150,7 +1644,7 @@ AnyMap AnyMap::fromYamlString(const std::string& yaml) {
         throw InputFileError("AnyMap::fromYamlString", fake, err.msg);
     }
     amap.setMetadata("file-contents", AnyValue(yaml));
-    amap.applyUnits(UnitSystem());
+    amap.applyUnits();
     return amap;
 }
 
@@ -1192,7 +1686,7 @@ AnyMap AnyMap::fromYamlFile(const std::string& name,
         YAML::Node node = YAML::LoadFile(fullName);
         cache_item.first = node.as<AnyMap>();
         cache_item.first.setMetadata("filename", AnyValue(fullName));
-        cache_item.first.applyUnits(UnitSystem());
+        cache_item.first.applyUnits();
     } catch (YAML::Exception& err) {
         s_cache.erase(fullName);
         AnyMap fake;
@@ -1211,6 +1705,15 @@ AnyMap AnyMap::fromYamlFile(const std::string& name,
 
     // Return a copy of the AnyMap
     return cache_item.first;
+}
+
+std::string AnyMap::toYamlString() const
+{
+    YAML::Emitter out;
+    const_cast<AnyMap*>(this)->applyUnits();
+    out << *this;
+    out << YAML::Newline;
+    return out.c_str();
 }
 
 AnyMap::Iterator begin(const AnyValue& v) {

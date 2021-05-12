@@ -120,12 +120,54 @@ bool BulkKinetics::addReaction(shared_ptr<Reaction> r)
     } else {
         m_irrev.push_back(nReactions()-1);
     }
+
+    if (std::dynamic_pointer_cast<Reaction2>(r) != nullptr) {
+        shared_ptr<ReactionRateBase> rate;
+        rate = std::dynamic_pointer_cast<Reaction2>(r)->rate();
+        // If neccessary, add new MultiBulkRates evaluator
+        if (m_bulk_types.find(rate->type()) == m_bulk_types.end()) {
+            m_bulk_types[rate->type()] = m_bulk_rates.size();
+
+            if (rate->type() == "ArrheniusRate") {
+                m_bulk_rates.push_back(std::unique_ptr<MultiRateBase>(
+                    new MultiBulkRates<ArrheniusRate, ArrheniusData>));
+            } else if (rate->type() == "custom-function") {
+                m_bulk_rates.push_back(std::unique_ptr<MultiRateBase>(
+                    new MultiBulkRates<CustomFunc1Rate, CustomFunc1Data>));
+            }
+        }
+
+        // Add reaction rate to evaluator
+        size_t index = m_bulk_types[rate->type()];
+        m_bulk_rates[index]->add(nReactions() - 1, *rate);
+    }
+
     return true;
 }
 
 void BulkKinetics::addElementaryReaction(ElementaryReaction& r)
 {
     m_rates.install(nReactions()-1, r.rate);
+}
+
+void BulkKinetics::modifyReaction(size_t i, shared_ptr<Reaction> rNew)
+{
+    // operations common to all reaction types
+    Kinetics::modifyReaction(i, rNew);
+
+    if (std::dynamic_pointer_cast<Reaction2>(rNew) != nullptr) {
+        shared_ptr<ReactionRateBase> rate;
+        rate = std::dynamic_pointer_cast<Reaction2>(rNew)->rate();
+        // Ensure that MultiBulkRates evaluator is available
+        if (m_bulk_types.find(rate->type()) != m_bulk_types.end()) {
+            throw CanteraError("BulkKinetics::modifyReaction",
+                 "Evaluator not available for type '{}'.", rate->type());
+        }
+
+        // Replace reaction rate to evaluator
+        size_t index = m_bulk_types[rate->type()];
+        m_bulk_rates[index]->replace(i, *rate);
+    }
 }
 
 void BulkKinetics::modifyElementaryReaction(size_t i, ElementaryReaction& rNew)

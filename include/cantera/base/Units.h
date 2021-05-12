@@ -55,6 +55,8 @@ public:
     //! the dimensions of these Units.
     Units pow(double expoonent) const;
 
+    bool operator==(const Units& other) const;
+
 private:
     //! Scale the unit by the factor `k`
     void scale(double k) { m_factor *= k; }
@@ -140,13 +142,15 @@ public:
                    const std::string& dest) const;
     double convert(double value, const Units& src, const Units& dest) const;
 
-    //! Convert `value` from this unit system (defined by `setDefaults`) to the
-    //! specified units.
-    //!
-    //! @warning This function is an experimental part of the %Cantera API and
-    //!    may be changed or removed without notice.
-    double convert(double value, const std::string& dest) const;
-    double convert(double value, const Units& dest) const;
+    //! Convert `value` to the specified `dest` units from the appropriate units
+    //! for this unit system (defined by `setDefaults`)
+    double convertTo(double value, const std::string& dest) const;
+    double convertTo(double value, const Units& dest) const;
+
+    //! Convert `value` from the specified `src` units to units appropriate for
+    //! this unit system (defined by `setDefaults`)
+    double convertFrom(double value, const std::string& src) const;
+    double convertFrom(double value, const Units& src) const;
 
     //! Convert a generic AnyValue node to the units specified in `dest`. If the
     //! input is a double, convert it using the default units. If the input is a
@@ -168,12 +172,14 @@ public:
     double convertActivationEnergy(double value, const std::string& src,
                                    const std::string& dest) const;
 
-    //! Convert `value` from the default activation energy units to the
-    //! specified units
-    //!
-    //! @warning This function is an experimental part of the %Cantera API and
-    //!    may be changed or removed without notice.
-    double convertActivationEnergy(double value, const std::string& dest) const;
+    //! Convert `value` to the units specified by `dest` from the default
+    //! activation energy units
+    double convertActivationEnergyTo(double value, const std::string& dest) const;
+    double convertActivationEnergyTo(double value, const Units& dest) const;
+
+    //! Convert `value` from the units specified by `src` to the default
+    //! activation energy units
+    double convertActivationEnergyFrom(double value, const std::string& src) const;
 
     //! Convert a generic AnyValue node to the units specified in `dest`. If the
     //! input is a double, convert it using the default units. If the input is a
@@ -181,6 +187,9 @@ public:
     //! convert from the specified units.
     double convertActivationEnergy(const AnyValue& val,
                                    const std::string& dest) const;
+
+    //! Get the changes to the defaults from `other` to this UnitSystem
+    AnyMap getDelta(const UnitSystem& other) const;
 
 private:
     //! Factor to convert mass from this unit system to kg
@@ -207,6 +216,10 @@ private:
     //! True if activation energy units are set explicitly, rather than as a
     //! combination of energy and quantity units
     bool m_explicit_activation_energy;
+
+    //! Map of dimensions (mass, length, etc.) to names of specified default
+    //! units
+    std::map<std::string, std::string> m_defaults;
 };
 
 }

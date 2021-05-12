@@ -56,6 +56,10 @@ cdef class GasTransportData:
             dipole, polarizability, rotational_relaxation, acentric_factor,
             dispersion_coefficient, quadrupole_polarizability)
 
+    property input_data:
+        def __get__(self):
+            return anymap_to_dict(self.data.parameters(True))
+
     property geometry:
         """
         Get/Set the string specifying the molecular geometry. One of `atom`,

@@ -4,7 +4,9 @@
 #include "cantera/kinetics/GasKinetics.h"
 #include "cantera/thermo/SurfPhase.h"
 #include "cantera/kinetics/KineticsFactory.h"
+#include "cantera/kinetics/ReactionFactory.h"
 #include "cantera/thermo/ThermoFactory.h"
+#include "cantera/base/Array.h"
 
 using namespace Cantera;
 
@@ -19,7 +21,7 @@ TEST(Reaction, ElementaryFromYaml)
     auto R = newReaction(rxn, *(sol->kinetics()));
     EXPECT_EQ(R->reactants.at("NO"), 1);
     EXPECT_EQ(R->products.at("N2"), 1);
-    EXPECT_EQ(R->reaction_type, ELEMENTARY_RXN);
+    EXPECT_EQ(R->type(), "elementary");
 
     auto ER = dynamic_cast<ElementaryReaction&>(*R);
     EXPECT_DOUBLE_EQ(ER.rate.preExponentialFactor(), -2.7e10);
@@ -39,6 +41,7 @@ TEST(Reaction, ThreeBodyFromYaml1)
 
     auto R = newReaction(rxn, *(sol->kinetics()));
     EXPECT_EQ(R->reactants.count("M"), (size_t) 0);
+    EXPECT_EQ(R->type(), "three-body");
 
     auto TBR = dynamic_cast<ThreeBodyReaction&>(*R);
     EXPECT_DOUBLE_EQ(TBR.rate.preExponentialFactor(), 1.2e11);
@@ -170,6 +173,39 @@ TEST(Reaction, ChebyshevFromYaml)
     EXPECT_NEAR(CR.rate.updateRC(std::log(T), 1.0/T), 130512.2773948636, 1e-9);
 }
 
+TEST(Reaction, BlowersMaselFromYaml)
+{
+    auto sol = newSolution("gri30.yaml");
+    AnyMap rxn = AnyMap::fromYamlString(
+        "{equation: O + H2 <=> H + OH,"
+        " type: Blowers-Masel,"
+        " rate-constant: [-3.87e+04 cm^3/mol/s, 2.7, 6260.0 cal/mol, 1e9 cal/mol],"
+        " negative-A: true}");
+
+    auto R = newReaction(rxn, *(sol->kinetics()));
+    EXPECT_EQ(R->reactants.at("H2"), 1);
+    EXPECT_EQ(R->products.at("OH"), 1);
+    EXPECT_EQ(R->reaction_type, BLOWERSMASEL_RXN);
+
+    auto ER = dynamic_cast<BlowersMaselReaction&>(*R);
+    doublereal E_intrinsic = 6260 / GasConst_cal_mol_K * GasConstant; // J/kmol
+    doublereal H_big = 5 * E_intrinsic;
+    doublereal H_small = -5 * E_intrinsic;
+    doublereal H_mid = 4 * E_intrinsic;
+    doublereal w = 1e9 / GasConst_cal_mol_K * GasConstant; // J/kmol
+    doublereal vp = 2 * w * ((w + E_intrinsic) / (w - E_intrinsic));
+    doublereal Ea = (w + H_mid / 2) * (vp - 2 * w + H_mid) * (vp - 2 * w + H_mid)
+                    / (vp * vp - 4 * w * w + H_mid * H_mid );
+    EXPECT_DOUBLE_EQ(ER.rate.preExponentialFactor(), -38.7);
+    EXPECT_DOUBLE_EQ(ER.rate.activationEnergy_R0(), 6260 / GasConst_cal_mol_K);
+    EXPECT_DOUBLE_EQ(ER.rate.bondEnergy(), 1e9 / GasConst_cal_mol_K);
+    EXPECT_DOUBLE_EQ(ER.rate.activationEnergy_R(H_big), H_big / GasConstant);
+    EXPECT_DOUBLE_EQ(ER.rate.activationEnergy_R(H_small), 0);
+    EXPECT_NEAR(ER.rate.activationEnergy_R(H_mid), Ea / GasConstant, 1e-7);
+    EXPECT_TRUE(ER.allow_negative_pre_exponential_factor);
+    EXPECT_FALSE(ER.allow_negative_orders);
+}
+
 TEST(Kinetics, GasKineticsFromYaml1)
 {
     AnyMap infile = AnyMap::fromYamlFile("ideal-gas.yaml");
@@ -234,6 +270,31 @@ TEST(Kinetics, InterfaceKineticsFromYaml)
 
     auto R3 = kin->reaction(2);
     auto IR3 = std::dynamic_pointer_cast<InterfaceReaction>(R3);
+    EXPECT_TRUE(IR3->is_sticking_coefficient);
+}
+
+TEST(Kinetics, BMInterfaceKineticsFromYaml)
+{
+    shared_ptr<ThermoPhase> gas(newPhase("BM_test.yaml", "gas"));
+    shared_ptr<ThermoPhase> surf_tp(newPhase("BM_test.yaml", "Pt_surf"));
+    shared_ptr<SurfPhase> surf = std::dynamic_pointer_cast<SurfPhase>(surf_tp);
+    std::vector<ThermoPhase*> phases{surf_tp.get(), gas.get()};
+    auto kin = newKinetics(phases, "BM_test.yaml", "Pt_surf");
+    EXPECT_EQ(kin->nReactions(), (size_t) 6);
+    EXPECT_EQ(kin->nTotalSpecies(), (size_t) 14);
+    auto R1 = kin->reaction(5);
+    auto IR1 = std::dynamic_pointer_cast<BlowersMaselInterfaceReaction>(R1);
+    EXPECT_DOUBLE_EQ(R1->orders["PT(s)"], 1.0);
+    EXPECT_DOUBLE_EQ(IR1->rate.preExponentialFactor(), 4.4579e7);
+
+    auto R2 = kin->reaction(0);
+    auto IR2 = std::dynamic_pointer_cast<BlowersMaselInterfaceReaction>(R2);
+    EXPECT_DOUBLE_EQ(IR2->rate.preExponentialFactor(), 3.7e20);
+    EXPECT_DOUBLE_EQ(IR2->coverage_deps["H(S)"].E, -6e6 / GasConstant);
+    EXPECT_FALSE(IR2->is_sticking_coefficient);
+
+    auto R3 = kin->reaction(1);
+    auto IR3 = std::dynamic_pointer_cast<BlowersMaselInterfaceReaction>(R3);
     EXPECT_TRUE(IR3->is_sticking_coefficient);
 }
 
@@ -319,4 +380,187 @@ TEST(KineticsFromYaml, ReactionsFieldWithoutKineticsModel2)
     EXPECT_THROW(newSolution("phase-reaction-spec2.yaml",
                              "nokinetics-reactions"),
                  InputFileError);
+}
+
+class ReactionToYaml : public testing::Test
+{
+public:
+    void duplicateReaction(size_t i) {
+        auto kin = soln->kinetics();
+        iOld = i;
+        AnyMap rdata1 = kin->reaction(iOld)->parameters();
+        AnyMap rdata2 = AnyMap::fromYamlString(rdata1.toYamlString());
+        duplicate = newReaction(rdata2, *kin);
+        kin->addReaction(duplicate);
+        iNew = kin->nReactions() - 1;
+    }
+
+    void compareReactions() {
+        auto kin = soln->kinetics();
+        EXPECT_EQ(kin->reactionString(iOld), kin->reactionString(iNew));
+        EXPECT_EQ(kin->reactionTypeStr(iOld), kin->reactionTypeStr(iNew));
+        EXPECT_EQ(kin->isReversible(iOld), kin->isReversible(iNew));
+
+        vector_fp kf(kin->nReactions()), kr(kin->nReactions());
+        vector_fp ropf(kin->nReactions()), ropr(kin->nReactions());
+        kin->getFwdRateConstants(kf.data());
+        kin->getRevRateConstants(kr.data());
+        kin->getFwdRatesOfProgress(ropf.data());
+        kin->getRevRatesOfProgress(ropr.data());
+        EXPECT_DOUBLE_EQ(kf[iOld], kf[iNew]);
+        EXPECT_DOUBLE_EQ(kr[iOld], kr[iNew]);
+        EXPECT_DOUBLE_EQ(ropf[iOld], ropf[iNew]);
+        EXPECT_DOUBLE_EQ(ropr[iOld], ropr[iNew]);
+    }
+
+    shared_ptr<Solution> soln;
+    shared_ptr<Reaction> duplicate;
+
+    size_t iOld;
+    size_t iNew;
+};
+
+TEST_F(ReactionToYaml, elementary)
+{
+    soln = newSolution("h2o2.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "H2:1.0, O2:0.5, O:1e-8, OH:3e-8");
+    duplicateReaction(2);
+    EXPECT_TRUE(std::dynamic_pointer_cast<ElementaryReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, threeBody)
+{
+    soln = newSolution("h2o2.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "H2:1.0, O2:0.5, O:1e-8, OH:3e-8, H:2e-7");
+    duplicateReaction(1);
+    EXPECT_TRUE(std::dynamic_pointer_cast<ThreeBodyReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, TroeFalloff)
+{
+    soln = newSolution("h2o2.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "H2:1.0, O2:0.5, H2O2:1e-8, OH:3e-8");
+    duplicateReaction(20);
+    EXPECT_TRUE(std::dynamic_pointer_cast<FalloffReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, SriFalloff)
+{
+    soln = newSolution("sri-falloff.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "R1A: 0.1, R1B:0.2, H: 0.2, R2:0.5");
+    duplicateReaction(0);
+    EXPECT_TRUE(std::dynamic_pointer_cast<FalloffReaction>(duplicate));
+    compareReactions();
+    duplicateReaction(1);
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, chemicallyActivated)
+{
+    soln = newSolution("chemically-activated-reaction.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "H2:1.0, ch2o:0.1, ch3:1e-8, oh:3e-6");
+    duplicateReaction(0);
+    EXPECT_TRUE(std::dynamic_pointer_cast<ChemicallyActivatedReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, pdepArrhenius)
+{
+    soln = newSolution("pdep-test.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "R2:1, H:0.1, P2A:2, P2B:0.3");
+    duplicateReaction(1);
+    EXPECT_TRUE(std::dynamic_pointer_cast<PlogReaction>(duplicate));
+    compareReactions();
+    soln->thermo()->setState_TPY(1100, 1e3, "R2:1, H:0.2, P2A:2, P2B:0.3");
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, Chebyshev)
+{
+    soln = newSolution("pdep-test.xml");
+    soln->thermo()->setState_TPY(1000, 2e5, "R6:1, P6A:2, P6B:0.3");
+    duplicateReaction(5);
+    EXPECT_TRUE(std::dynamic_pointer_cast<ChebyshevReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, surface)
+{
+    auto gas = newSolution("diamond.yaml", "gas");
+    auto solid = newSolution("diamond.yaml", "diamond");
+    soln = newSolution("diamond.yaml", "diamond_100", "None", {gas, solid});
+    auto surf = std::dynamic_pointer_cast<SurfPhase>(soln->thermo());
+    surf->setCoveragesByName("c6HH:0.1, c6H*:0.6, c6**:0.1");
+    gas->thermo()->setMassFractionsByName("H2:0.7, CH4:0.3");
+    duplicateReaction(0);
+    EXPECT_TRUE(std::dynamic_pointer_cast<InterfaceReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, electrochemical)
+{
+    auto gas = newSolution("sofc.yaml", "gas");
+    auto metal = newSolution("sofc.yaml", "metal");
+    auto oxide_bulk = newSolution("sofc.yaml", "oxide_bulk");
+    auto metal_surf = newSolution("sofc.yaml", "metal_surface", "None", {gas});
+    auto oxide_surf = newSolution("sofc.yaml", "oxide_surface", "None",
+                                  {gas, oxide_bulk});
+    soln = newSolution("sofc.yaml", "tpb", "None",
+                       {metal, metal_surf, oxide_surf});
+    auto ox_surf = std::dynamic_pointer_cast<SurfPhase>(oxide_surf->thermo());
+    oxide_bulk->thermo()->setElectricPotential(-3.4);
+    oxide_surf->thermo()->setElectricPotential(-3.4);
+    ox_surf->setCoveragesByName("O''(ox):0.2, OH'(ox):0.3, H2O(ox):0.5");
+    duplicateReaction(0);
+    EXPECT_TRUE(std::dynamic_pointer_cast<ElectrochemicalReaction>(duplicate));
+    compareReactions();
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, unconvertible1)
+{
+    ElementaryReaction R({{"H2", 1}, {"OH", 1}},
+                         {{"H2O", 1}, {"H", 1}},
+                         Arrhenius(1e5, -1.0, 12.5));
+    AnyMap params = R.parameters();
+    UnitSystem U{"g", "cm", "mol"};
+    params.setUnits(U);
+    EXPECT_THROW(params.applyUnits(), CanteraError);
+}
+
+TEST_F(ReactionToYaml, unconvertible2)
+{
+    Array2D coeffs(2, 2, 1.0);
+    ChebyshevReaction R({{"H2", 1}, {"OH", 1}},
+                        {{"H2O", 1}, {"H", 1}},
+                        ChebyshevRate(273, 3000, 1e2, 1e7, coeffs));
+    UnitSystem U{"g", "cm", "mol"};
+    AnyMap params = R.parameters();
+    params.setUnits(U);
+    EXPECT_THROW(params.applyUnits(), CanteraError);
+}
+
+TEST_F(ReactionToYaml, BlowersMasel)
+{
+    soln = newSolution("BM_test.yaml", "gas");
+    soln->thermo()->setState_TPY(1100, 0.1 * OneAtm, "O:0.01, H2:0.8, O2:0.19");
+    duplicateReaction(0);
+    EXPECT_TRUE(std::dynamic_pointer_cast<BlowersMaselReaction>(duplicate));
+    compareReactions();
+}
+
+TEST_F(ReactionToYaml, BlowersMaselInterface)
+{
+    auto gas = newSolution("BM_test.yaml", "gas");
+    soln = newSolution("BM_test.yaml", "Pt_surf", "None", {gas});
+    gas->thermo()->setState_TPY(1100, 0.1 * OneAtm, "O:0.01, H2:0.8, O2:0.19");
+    soln->thermo()->setState_TP(1100, 0.1 * OneAtm);
+    auto surf = std::dynamic_pointer_cast<SurfPhase>(soln->thermo());
+    surf->setCoveragesByName("H(S):0.1, PT(S):0.8, H2O(S):0.1");
+    duplicateReaction(0);
+    EXPECT_TRUE(std::dynamic_pointer_cast<BlowersMaselInterfaceReaction>(duplicate));
+    compareReactions();
 }

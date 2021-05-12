@@ -9,7 +9,9 @@
 #define CT_REACTION_H
 
 #include "cantera/base/AnyMap.h"
+#include "cantera/kinetics/ReactionRate.h"
 #include "cantera/kinetics/RxnRates.h"
+#include "cantera/base/Units.h"
 
 namespace Cantera
 {
@@ -18,12 +20,18 @@ class Kinetics;
 class Falloff;
 class XML_Node;
 
-//! Intermediate class which stores data about a reaction and its rate
+//! Abstract base class which stores data about a reaction and its rate
 //! parameterization so that it can be added to a Kinetics object.
 class Reaction
 {
 public:
+    Reaction();
+    Reaction(const Composition& reactants,
+             const Composition& products);
+
+    //! @deprecated To be removed after Cantera 2.6.
     explicit Reaction(int type);
+    //! @deprecated To be removed after Cantera 2.6.
     Reaction(int type, const Composition& reactants,
              const Composition& products);
     virtual ~Reaction() {}
@@ -37,12 +45,42 @@ public:
     //! The chemical equation for this reaction
     std::string equation() const;
 
+    //! The type of reaction
+    virtual std::string type() const = 0; // pure virtual function
+
+    //! Calculate the units of the rate constant. These are determined by the units
+    //! of the standard concentration of the reactant species' phases and the phase
+    //! where the reaction occurs. Sets the value of #rate_units.
+    virtual void calculateRateCoeffUnits(const Kinetics& kin);
+
     //! Ensure that the rate constant and other parameters for this reaction are
     //! valid.
     virtual void validate();
 
+    //! Return the parameters such that an identical Reaction could be reconstructed
+    //! using the newReaction() function. Behavior specific to derived classes is
+    //! handled by the getParameters() method.
+    //! @param withInput  If true, include additional input data fields associated
+    //!   with the object, such as user-defined fields from a YAML input file, as
+    //!   contained in the #input attribute.
+    AnyMap parameters(bool withInput=true) const;
+
+    //! Get validity flag of reaction
+    bool valid() const {
+        return m_valid;
+    }
+
+    //! Set validity flag of reaction
+    void setValid(bool valid) {
+        m_valid = valid;
+    }
+
     //! Type of the reaction. The valid types are listed in the file,
     //! reaction_defs.h, with constants ending in `RXN`.
+    /*!
+     * @deprecated To be removed in Cantera 2.6.
+     *             Superseded by Reaction::type().
+     */
     int reaction_type;
 
     //! Reactant species and stoichiometric coefficients
@@ -75,6 +113,45 @@ public:
 
     //! Input data used for specific models
     AnyMap input;
+
+    //! The units of the rate constant. These are determined by the units of the
+    //! standard concentration of the reactant species' phases of the phase
+    //! where the reaction occurs.
+    Units rate_units;
+
+protected:
+    //! Store the parameters of a Reaction needed to reconstruct an identical
+    //! object using the newReaction(AnyMap&, Kinetics&) function. Does not
+    //! include user-defined fields available in the #input map.
+    virtual void getParameters(AnyMap& reactionNode) const;
+
+    //! Flag indicating whether reaction is set up correctly
+    bool m_valid;
+};
+
+
+//! An intermediate class used to avoid naming conflicts of 'rate' member
+//! variables and getters (see `ElementaryReaction`, `PlogReaction` and
+//! `ChebyshevReaction`).
+class Reaction2 : public Reaction
+{
+public:
+    //! Get reaction rate pointer
+    shared_ptr<ReactionRateBase> rate() {
+        return m_rate;
+    }
+
+    //! Set reaction rate pointer
+    void setRate(shared_ptr<ReactionRateBase> rate) {
+        m_rate = rate;
+    }
+
+    //! Set up reaction based on AnyMap node
+    virtual void setParameters(const AnyMap& node, const Kinetics& kin);
+
+protected:
+    //! Reaction rate used by generic reactions
+    shared_ptr<ReactionRateBase> m_rate;
 };
 
 
@@ -87,6 +164,11 @@ public:
     ElementaryReaction(const Composition& reactants, const Composition products,
                        const Arrhenius& rate);
     virtual void validate();
+    virtual void getParameters(AnyMap& reactionNode) const;
+
+    virtual std::string type() const {
+        return "elementary";
+    }
 
     Arrhenius rate;
     bool allow_negative_pre_exponential_factor;
@@ -117,8 +199,15 @@ public:
     ThreeBodyReaction();
     ThreeBodyReaction(const Composition& reactants, const Composition& products,
                       const Arrhenius& rate, const ThirdBody& tbody);
+
+    virtual std::string type() const {
+        return "three-body";
+    }
+
     virtual std::string reactantString() const;
     virtual std::string productString() const;
+    virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void getParameters(AnyMap& reactionNode) const;
 
     //! Relative efficiencies of third-body species in enhancing the reaction
     //! rate.
@@ -134,9 +223,16 @@ public:
     FalloffReaction(const Composition& reactants, const Composition& products,
                     const Arrhenius& low_rate, const Arrhenius& high_rate,
                     const ThirdBody& tbody);
+
+    virtual std::string type() const {
+        return "falloff";
+    }
+
     virtual std::string reactantString() const;
     virtual std::string productString() const;
     virtual void validate();
+    virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void getParameters(AnyMap& reactionNode) const;
 
     //! The rate constant in the low-pressure limit
     Arrhenius low_rate;
@@ -152,6 +248,10 @@ public:
     shared_ptr<Falloff> falloff;
 
     bool allow_negative_pre_exponential_factor;
+
+    //! The units of the low-pressure rate constant. The units of the
+    //! high-pressure rate constant are stored in #rate_units.
+    Units low_rate_units;
 };
 
 //! A reaction where the rate decreases as pressure increases due to collisional
@@ -165,6 +265,13 @@ public:
     ChemicallyActivatedReaction(const Composition& reactants,
         const Composition& products, const Arrhenius& low_rate,
         const Arrhenius& high_rate, const ThirdBody& tbody);
+
+    virtual std::string type() const {
+        return "chemically-activated";
+    }
+
+    virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void getParameters(AnyMap& reactionNode) const;
 };
 
 //! A pressure-dependent reaction parameterized by logarithmically interpolating
@@ -175,7 +282,14 @@ public:
     PlogReaction();
     PlogReaction(const Composition& reactants, const Composition& products,
                  const Plog& rate);
+
+    virtual std::string type() const {
+        return "pressure-dependent-Arrhenius";
+    }
+
     virtual void validate();
+    virtual void getParameters(AnyMap& reactionNode) const;
+
     Plog rate;
 };
 
@@ -187,9 +301,56 @@ public:
     ChebyshevReaction();
     ChebyshevReaction(const Composition& reactants, const Composition& products,
                       const ChebyshevRate& rate);
+    virtual void getParameters(AnyMap& reactionNode) const;
+
+    virtual std::string type() const {
+        return "Chebyshev";
+    }
 
     ChebyshevRate rate;
 };
+
+//! A reaction which follows mass-action kinetics with a custom reaction rate
+//! defined in Python.
+/**
+ * @warning This class is an experimental part of the %Cantera API and
+ *    may be changed or removed without notice.
+ */
+class CustomFunc1Reaction : public Reaction2
+{
+public:
+    CustomFunc1Reaction();
+
+    virtual void setParameters(const AnyMap& node, const Kinetics& kin);
+
+    virtual std::string type() const {
+        return "custom-rate-function";
+    }
+};
+
+
+//! A reaction which follows mass-action kinetics with a modified Arrhenius
+//! reaction rate.
+/**
+ * Alternative elementary reaction based on ReactionRate.
+ *
+ * @warning This class is an experimental part of the %Cantera API and
+ *    may be changed or removed without notice.
+ */
+class TestReaction : public Reaction2
+{
+public:
+    TestReaction();
+
+    virtual std::string type() const {
+        return "elementary-new";
+    }
+
+    virtual void setParameters(const AnyMap& node, const Kinetics& kin);
+
+    bool allow_negative_pre_exponential_factor;
+};
+
 
 //! Modifications to an InterfaceReaction rate based on a surface species
 //! coverage.
@@ -213,6 +374,13 @@ public:
     InterfaceReaction();
     InterfaceReaction(const Composition& reactants, const Composition& products,
                       const Arrhenius& rate, bool isStick=false);
+    virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void getParameters(AnyMap& reactionNode) const;
+    virtual void validate();
+
+    virtual std::string type() const {
+        return "interface";
+    }
 
     //! Adjustments to the Arrhenius rate expression dependent on surface
     //! species coverages. Three coverage parameters (a, E, m) are used for each
@@ -242,6 +410,7 @@ public:
     ElectrochemicalReaction();
     ElectrochemicalReaction(const Composition& reactants,
                             const Composition& products, const Arrhenius& rate);
+    virtual void getParameters(AnyMap& reactionNode) const;
 
     //! Forward value of the apparent Electrochemical transfer coefficient
     doublereal beta;
@@ -249,14 +418,60 @@ public:
     bool exchange_current_density_formulation;
 };
 
-//! Create a new Reaction object for the reaction defined in `rxn_node`
-//!
-//! @deprecated The XML input format is deprecated and will be removed in
-//!     Cantera 3.0.
-shared_ptr<Reaction> newReaction(const XML_Node& rxn_node);
+//! A reaction with rate parameters for Blowers-Masel approximation
+class BlowersMaselReaction: public Reaction
+{
+public:
+    BlowersMaselReaction();
+    BlowersMaselReaction(const Composition& reactants,
+                         const Composition& products, const BlowersMasel& rate);
+    virtual void getParameters(AnyMap& reactionNode) const;
+    virtual void validate();
 
-//! Create a new Reaction object using the specified parameters
-unique_ptr<Reaction> newReaction(const AnyMap& rxn_node, const Kinetics& kin);
+    virtual std::string type() const {
+        return "Blowers-Masel";
+    }
+
+    BlowersMasel rate;
+
+    bool allow_negative_pre_exponential_factor;
+};
+
+//! A reaction occurring on an interface (i.e. a SurfPhase or an EdgePhase)
+//! with the rate calculated with Blowers-Masel approximation.
+class BlowersMaselInterfaceReaction : public BlowersMaselReaction
+{
+public:
+    BlowersMaselInterfaceReaction();
+    BlowersMaselInterfaceReaction(const Composition& reactants, const Composition& products,
+                      const BlowersMasel& rate, bool isStick=false);
+    virtual void getParameters(AnyMap& reactionNode) const;
+    virtual void calculateRateCoeffUnits(const Kinetics& kin);
+    virtual void validate();
+
+    virtual std::string type() const {
+        return "surface-Blowers-Masel";
+    }
+    //! Adjustments to the Arrhenius rate expression dependent on surface
+    //! species coverages. Three coverage parameters (a, E, m) are used for each
+    //! species on which the rate depends. See SurfaceArrhenius for details on
+    //! the parameterization.
+    std::map<std::string, CoverageDependency> coverage_deps;
+
+    //! Set to true if `rate` is a parameterization of the sticking coefficient
+    //! rather than the forward rate constant
+    bool is_sticking_coefficient;
+
+    //! Set to true if `rate` is a sticking coefficient which should be
+    //! translated into a rate coefficient using the correction factor developed
+    //! by Motz & Wise for reactions with high (near-unity) sticking
+    //! coefficients. Defaults to 'false'.
+    bool use_motz_wise_correction;
+
+    //! For reactions with multiple non-surface species, the sticking species
+    //! needs to be explicitly identified.
+    std::string sticking_species;
+};
 
 //! Create Reaction objects for all `<reaction>` nodes in an XML document.
 //!
@@ -286,6 +501,56 @@ std::vector<shared_ptr<Reaction> > getReactions(const XML_Node& node);
 //! Kinetics object `kinetics`.
 std::vector<shared_ptr<Reaction>> getReactions(const AnyValue& items,
                                                Kinetics& kinetics);
+
+//! Parse reaction equation
+void parseReactionEquation(Reaction& R, const AnyValue& equation,
+                           const Kinetics& kin);
+
+// declarations of setup functions
+void setupElementaryReaction(ElementaryReaction&, const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupElementaryReaction(ElementaryReaction&, const AnyMap&,
+                             const Kinetics&);
+
+void setupThreeBodyReaction(ThreeBodyReaction&, const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupThreeBodyReaction(ThreeBodyReaction&, const AnyMap&,
+                            const Kinetics&);
+
+void setupFalloffReaction(FalloffReaction&, const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupFalloffReaction(FalloffReaction&, const AnyMap&,
+                          const Kinetics&);
+
+void setupChemicallyActivatedReaction(ChemicallyActivatedReaction&,
+                                      const XML_Node&);
+
+void setupPlogReaction(PlogReaction&, const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupPlogReaction(PlogReaction&, const AnyMap&, const Kinetics&);
+
+void setupChebyshevReaction(ChebyshevReaction&, const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupChebyshevReaction(ChebyshevReaction&, const AnyMap&,
+                            const Kinetics&);
+
+void setupInterfaceReaction(InterfaceReaction&, const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupInterfaceReaction(InterfaceReaction&, const AnyMap&,
+                            const Kinetics&);
+
+void setupElectrochemicalReaction(ElectrochemicalReaction&,
+                                  const XML_Node&);
+//! @internal May be changed without notice in future versions
+void setupElectrochemicalReaction(ElectrochemicalReaction&,
+                                  const AnyMap&, const Kinetics&);
+
+//! @internal May be changed without notice in future versions
+void setupBlowersMaselReaction(BlowersMaselReaction&,
+                               const AnyMap&, const Kinetics&);
+//! @internal May be changed without notice in future versions
+void setupBlowersMaselInterfaceReaction(BlowersMaselInterfaceReaction&,
+                                        const AnyMap&, const Kinetics&);
 }
 
 #endif

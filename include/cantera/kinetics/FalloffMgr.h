@@ -9,6 +9,7 @@
 #define CT_FALLOFFMGR_H
 
 #include "Falloff.h"
+#include "cantera/base/global.h"
 
 namespace Cantera
 {
@@ -32,13 +33,35 @@ public:
      *     determine which array entry is modified in method pr_to_falloff.
      * @param reactionType Either `FALLOFF_RXN` or `CHEMACT_RXN`
      * @param f The falloff function.
+     *
+     * @deprecated To be removed after Cantera 2.6.
      */
     void install(size_t rxn, int reactionType, shared_ptr<Falloff> f) {
+        warn_deprecated("FalloffMgr::install()",
+            "To be removed after Cantera 2.6. Specify reaction type using "
+            "string instead.");
+
         m_rxn.push_back(rxn);
         m_offset.push_back(m_worksize);
         m_worksize += f->workSize();
         m_falloff.push_back(f);
-        m_reactionType.push_back(reactionType);
+        m_isfalloff.push_back(reactionType == FALLOFF_RXN);
+        m_indices[rxn] = m_falloff.size()-1;
+    }
+
+    //! Install a new falloff function calculator.
+    /*
+     * @param rxn Index of the falloff reaction. This will be used to
+     *     determine which array entry is modified in method pr_to_falloff.
+     * @param type Reaction type identifier.
+     * @param f The falloff function.
+     */
+     void install(size_t rxn, std::string type, shared_ptr<Falloff> f) {
+        m_rxn.push_back(rxn);
+        m_offset.push_back(m_worksize);
+        m_worksize += f->workSize();
+        m_falloff.push_back(f);
+        m_isfalloff.push_back(type == "falloff");
         m_indices[rxn] = m_falloff.size()-1;
     }
 
@@ -76,14 +99,14 @@ public:
     void pr_to_falloff(doublereal* values, const doublereal* work) {
         for (size_t i = 0; i < m_rxn.size(); i++) {
             double pr = values[m_rxn[i]];
-            if (m_reactionType[i] == FALLOFF_RXN) {
+            if (m_isfalloff[i]) {
                 // Pr / (1 + Pr) * F
                 values[m_rxn[i]] *=
-                    m_falloff[i]->F(pr, work + m_offset[i]) /(1.0 + pr);
+                    m_falloff[i]->F(pr, work + m_offset[i]) / (1.0 + pr);
             } else {
                 // 1 / (1 + Pr) * F
                 values[m_rxn[i]] =
-                    m_falloff[i]->F(pr, work + m_offset[i]) /(1.0 + pr);
+                    m_falloff[i]->F(pr, work + m_offset[i]) / (1.0 + pr);
             }
         }
     }
@@ -96,7 +119,7 @@ protected:
     size_t m_worksize;
 
     //! Distinguish between falloff and chemically activated reactions
-    vector_int m_reactionType;
+    std::vector<bool> m_isfalloff;
 
     //! map of external reaction index to local index
     std::map<size_t, size_t> m_indices;

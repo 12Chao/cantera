@@ -8,6 +8,7 @@
 #include "cantera/base/global.h"
 #include "cantera/base/stringUtils.h"
 #include "cantera/base/AnyMap.h"
+#include "cantera/base/utilities.h"
 
 namespace {
 using namespace Cantera;
@@ -225,6 +226,19 @@ std::string Units::str() const {
                        m_temperature_dim, m_current_dim, m_quantity_dim);
 }
 
+bool Units::operator==(const Units& other) const
+{
+    return m_factor == other.m_factor
+           && m_mass_dim == other.m_mass_dim
+           && m_length_dim == other.m_length_dim
+           && m_time_dim == other.m_time_dim
+           && m_temperature_dim == other.m_temperature_dim
+           && m_current_dim == other.m_current_dim
+           && m_quantity_dim == other.m_quantity_dim
+           && m_pressure_dim == other.m_pressure_dim
+           && m_energy_dim == other.m_energy_dim;
+}
+
 UnitSystem::UnitSystem(std::initializer_list<std::string> units)
     : m_mass_factor(1.0)
     , m_length_factor(1.0)
@@ -244,16 +258,22 @@ void UnitSystem::setDefaults(std::initializer_list<std::string> units)
         auto unit = Units(name);
         if (unit.convertible(knownUnits.at("kg"))) {
             m_mass_factor = unit.factor();
+            m_defaults["mass"] = name;
         } else if (unit.convertible(knownUnits.at("m"))) {
             m_length_factor = unit.factor();
+            m_defaults["length"] = name;
         } else if (unit.convertible(knownUnits.at("s"))) {
             m_time_factor = unit.factor();
+            m_defaults["time"] = name;
         } else if (unit.convertible(knownUnits.at("kmol"))) {
             m_quantity_factor = unit.factor();
+            m_defaults["quantity"] = name;
         } else if (unit.convertible(knownUnits.at("Pa"))) {
             m_pressure_factor = unit.factor();
+            m_defaults["pressure"] = name;
         } else if (unit.convertible(knownUnits.at("J"))) {
             m_energy_factor = unit.factor();
+            m_defaults["energy"] = name;
         } else if (unit.convertible(knownUnits.at("K"))
                    || unit.convertible(knownUnits.at("A"))) {
             // Do nothing -- no other scales are supported for temperature and current
@@ -274,20 +294,26 @@ void UnitSystem::setDefaults(const std::map<std::string, std::string>& units)
         Units unit(item.second);
         if (name == "mass" && unit.convertible(knownUnits.at("kg"))) {
             m_mass_factor = unit.factor();
+            m_defaults["mass"] = item.second;
         } else if (name == "length" && unit.convertible(knownUnits.at("m"))) {
             m_length_factor = unit.factor();
+            m_defaults["length"] = item.second;
         } else if (name == "time" && unit.convertible(knownUnits.at("s"))) {
             m_time_factor = unit.factor();
+            m_defaults["time"] = item.second;
         } else if (name == "temperature" && item.second == "K") {
             // do nothing - no other temperature scales are supported
         } else if (name == "current" && item.second == "A") {
             // do nothing - no other current scales are supported
         } else if (name == "quantity" && unit.convertible(knownUnits.at("kmol"))) {
             m_quantity_factor = unit.factor();
+            m_defaults["quantity"] = item.second;
         } else if (name == "pressure" && unit.convertible(knownUnits.at("Pa"))) {
             m_pressure_factor = unit.factor();
+            m_defaults["pressure"] = item.second;
         } else if (name == "energy" && unit.convertible(knownUnits.at("J"))) {
             m_energy_factor = unit.factor();
+            m_defaults["energy"] = item.second;
         } else if (name == "activation-energy") {
             // handled separately to allow override
         } else {
@@ -306,6 +332,7 @@ void UnitSystem::setDefaults(const std::map<std::string, std::string>& units)
 void UnitSystem::setDefaultActivationEnergy(const std::string& e_units)
 {
     Units u(e_units);
+    m_defaults["activation-energy"] = e_units;
     if (u.convertible(Units("J/kmol"))) {
         m_activation_energy_factor = u.factor();
     } else if (u.convertible(knownUnits.at("K"))) {
@@ -335,12 +362,12 @@ double UnitSystem::convert(double value, const Units& src,
     return value * src.factor() / dest.factor();
 }
 
-double UnitSystem::convert(double value, const std::string& dest) const
+double UnitSystem::convertTo(double value, const std::string& dest) const
 {
-    return convert(value, Units(dest));
+    return convertTo(value, Units(dest));
 }
 
-double UnitSystem::convert(double value, const Units& dest) const
+double UnitSystem::convertTo(double value, const Units& dest) const
 {
     return value / dest.factor()
         * pow(m_mass_factor, dest.m_mass_dim - dest.m_pressure_dim - dest.m_energy_dim)
@@ -349,6 +376,22 @@ double UnitSystem::convert(double value, const Units& dest) const
         * pow(m_quantity_factor, dest.m_quantity_dim)
         * pow(m_pressure_factor, dest.m_pressure_dim)
         * pow(m_energy_factor, dest.m_energy_dim);
+}
+
+double UnitSystem::convertFrom(double value, const std::string& dest) const
+{
+    return convertFrom(value, Units(dest));
+}
+
+double UnitSystem::convertFrom(double value, const Units& src) const
+{
+    return value * src.factor()
+        * pow(m_mass_factor, -src.m_mass_dim + src.m_pressure_dim + src.m_energy_dim)
+        * pow(m_length_factor, -src.m_length_dim - src.m_pressure_dim + 2*src.m_energy_dim)
+        * pow(m_time_factor, -src.m_time_dim - 2*src.m_pressure_dim - 2*src.m_energy_dim)
+        * pow(m_quantity_factor, -src.m_quantity_dim)
+        * pow(m_pressure_factor, -src.m_pressure_dim)
+        * pow(m_energy_factor, -src.m_energy_dim);
 }
 
 static std::pair<double, std::string> split_unit(const AnyValue& v) {
@@ -379,7 +422,7 @@ double UnitSystem::convert(const AnyValue& v, const Units& dest) const
     auto val_units = split_unit(v);
     if (val_units.second.empty()) {
         // Just a value, so convert using default units
-        return convert(val_units.first, dest);
+        return convertTo(val_units.first, dest);
     } else {
         // Both source and destination units are explicit
         return convert(val_units.first, Units(val_units.second), dest);
@@ -434,19 +477,40 @@ double UnitSystem::convertActivationEnergy(double value, const std::string& src,
     return value;
 }
 
-double UnitSystem::convertActivationEnergy(double value,
-                                           const std::string& dest) const
+double UnitSystem::convertActivationEnergyTo(double value,
+                                             const std::string& dest) const
 {
-    Units udest(dest);
-    if (udest.convertible(Units("J/kmol"))) {
-        return value * m_activation_energy_factor / udest.factor();
-    } else if (udest.convertible(knownUnits.at("K"))) {
+    return convertActivationEnergyTo(value, Units(dest));
+}
+
+double UnitSystem::convertActivationEnergyTo(double value,
+                                             const Units& dest) const
+{
+    if (dest.convertible(Units("J/kmol"))) {
+        return value * m_activation_energy_factor / dest.factor();
+    } else if (dest.convertible(knownUnits.at("K"))) {
         return value * m_activation_energy_factor / GasConstant;
-    } else if (udest.convertible(knownUnits.at("eV"))) {
-        return value * m_activation_energy_factor / (Avogadro * udest.factor());
+    } else if (dest.convertible(knownUnits.at("eV"))) {
+        return value * m_activation_energy_factor / (Avogadro * dest.factor());
     } else {
-        throw CanteraError("UnitSystem::convertActivationEnergy",
-            "'{}' is not a unit of activation energy", dest);
+        throw CanteraError("UnitSystem::convertActivationEnergyTo",
+            "'{}' is not a unit of activation energy", dest.str());
+    }
+}
+
+double UnitSystem::convertActivationEnergyFrom(double value,
+                                               const std::string& src) const
+{
+    Units usrc(src);
+    if (usrc.convertible(Units("J/kmol"))) {
+        return value * usrc.factor() / m_activation_energy_factor;
+    } else if (usrc.convertible(knownUnits.at("K"))) {
+        return value * GasConstant / m_activation_energy_factor;
+    } else if (usrc.convertible(knownUnits.at("eV"))) {
+        return value * Avogadro * usrc.factor() / m_activation_energy_factor;
+    } else {
+        throw CanteraError("UnitSystem::convertActivationEnergyFrom",
+            "'{}' is not a unit of activation energy", src);
     }
 }
 
@@ -456,11 +520,44 @@ double UnitSystem::convertActivationEnergy(const AnyValue& v,
     auto val_units = split_unit(v);
     if (val_units.second.empty()) {
         // Just a value, so convert using default units
-        return convertActivationEnergy(val_units.first, dest);
+        return convertActivationEnergyTo(val_units.first, dest);
     } else {
         // Both source and destination units are explicit
         return convertActivationEnergy(val_units.first, val_units.second, dest);
     }
+}
+
+AnyMap UnitSystem::getDelta(const UnitSystem& other) const
+{
+    AnyMap delta;
+    // Create a local alias because the template specialization can't be deduced
+    // automatically
+    const auto& get = getValue<std::string, std::string>;
+    if (m_mass_factor != other.m_mass_factor) {
+        delta["mass"] = get(m_defaults, "mass", "kg");
+    }
+    if (m_length_factor != other.m_length_factor) {
+        delta["length"] = get(m_defaults, "length", "m");
+    }
+    if (m_time_factor != other.m_time_factor) {
+        delta["time"] = get(m_defaults, "time", "s");
+    }
+    if (m_pressure_factor != other.m_pressure_factor) {
+        delta["pressure"] = get(m_defaults, "pressure", "Pa");
+    }
+    if (m_energy_factor != other.m_energy_factor) {
+        delta["energy"] = get(m_defaults, "energy", "J");
+    }
+    if (m_quantity_factor != other.m_quantity_factor) {
+        delta["quantity"] = get(m_defaults, "quantity", "kmol");
+    }
+    if (m_explicit_activation_energy
+        || (other.m_explicit_activation_energy
+            && m_activation_energy_factor != m_energy_factor / m_quantity_factor))
+    {
+        delta["activation-energy"] = get(m_defaults, "activation-energy", "J/kmol");
+    }
+    return delta;
 }
 
 }

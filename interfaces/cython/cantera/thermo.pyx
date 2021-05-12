@@ -262,6 +262,11 @@ cdef class Species:
         def __set__(self, GasTransportData tran):
             self.species.transport = tran._data
 
+    property input_data:
+        def __get__(self):
+            cdef CxxThermoPhase* phase = self._phase.thermo if self._phase else NULL
+            return anymap_to_dict(self.species.parameters(phase))
+
     def __repr__(self):
         return '<Species {}>'.format(self.name)
 
@@ -548,6 +553,7 @@ cdef class ThermoPhase(_SolutionBase):
             return [self.species(i) for i in range(self.n_species)]
 
         s = Species(init=False)
+        s._phase = self
         if isinstance(k, (str, bytes)):
             s._assign(self.thermo.species(stringify(k)))
         elif isinstance(k, (int, float)):
@@ -572,6 +578,7 @@ cdef class ThermoPhase(_SolutionBase):
                 ' is linked to a Reactor, Domain1D (flame), or Mixture object.')
         self.thermo.addUndefinedElements()
         self.thermo.addSpecies(species._species)
+        species._phase = self
         self.thermo.initThermo()
         if self.kinetics:
             self.kinetics.invalidateCache()

@@ -23,10 +23,10 @@ GasKinetics::GasKinetics(ThermoPhase* thermo) :
 
 void GasKinetics::update_rates_T()
 {
-    doublereal T = thermo().temperature();
-    doublereal P = thermo().pressure();
+    double T = thermo().temperature();
+    double P = thermo().pressure();
     m_logStandConc = log(thermo().standardConcentration());
-    doublereal logT = log(T);
+    double logT = log(T);
 
     if (T != m_temp) {
         if (!m_rfn.empty()) {
@@ -42,9 +42,21 @@ void GasKinetics::update_rates_T()
         }
         updateKc();
         m_ROP_ok = false;
+        if (m_blowersmasel_rates.nReactions()) {
+            thermo().getPartialMolarEnthalpies(m_grt.data());
+            getReactionDelta(m_grt.data(), m_dH.data());
+            m_blowersmasel_rates.updateBlowersMasel(T, logT, m_rfn.data(), m_dH.data());
+        }
     }
 
     if (T != m_temp || P != m_pres) {
+
+        // loop over MultiBulkRates evaluators
+        for (auto& rates : m_bulk_rates) {
+            rates->update(thermo());
+            rates->getRateConstants(thermo(), m_rfn.data());
+        }
+
         if (m_plog_rates.nReactions()) {
             m_plog_rates.update(T, logT, m_rfn.data());
             m_ROP_ok = false;
@@ -142,7 +154,7 @@ void GasKinetics::processFalloffReactions()
     m_falloffn.pr_to_falloff(pr.data(), falloff_work.data());
 
     for (size_t i = 0; i < m_falloff_low_rates.nReactions(); i++) {
-        if (reactionType(m_fallindx[i]) == FALLOFF_RXN) {
+        if (reactionTypeStr(m_fallindx[i]) == "falloff") {
             pr[i] *= m_rfn_high[i];
         } else { // CHEMACT_RXN
             pr[i] *= m_rfn_low[i];
@@ -229,28 +241,28 @@ bool GasKinetics::addReaction(shared_ptr<Reaction> r)
     bool added = BulkKinetics::addReaction(r);
     if (!added) {
         return false;
+    } else if (std::dynamic_pointer_cast<Reaction2>(r) != nullptr) {
+        // Rate object already added in BulkKinetics::addReaction
+        return true;
     }
 
-    switch (r->reaction_type) {
-    case ELEMENTARY_RXN:
+    if (r->type() == "elementary") {
         addElementaryReaction(dynamic_cast<ElementaryReaction&>(*r));
-        break;
-    case THREE_BODY_RXN:
+    } else if (r->type() == "three-body") {
         addThreeBodyReaction(dynamic_cast<ThreeBodyReaction&>(*r));
-        break;
-    case FALLOFF_RXN:
-    case CHEMACT_RXN:
+    } else if (r->type() == "falloff") {
         addFalloffReaction(dynamic_cast<FalloffReaction&>(*r));
-        break;
-    case PLOG_RXN:
+    } else if (r->type() == "chemically-activated") {
+        addFalloffReaction(dynamic_cast<FalloffReaction&>(*r));
+    } else if (r->type() == "pressure-dependent-Arrhenius") {
         addPlogReaction(dynamic_cast<PlogReaction&>(*r));
-        break;
-    case CHEBYSHEV_RXN:
+    } else if (r->type() == "Chebyshev") {
         addChebyshevReaction(dynamic_cast<ChebyshevReaction&>(*r));
-        break;
-    default:
+    } else if (r->type() == "Blowers-Masel") {
+        addBlowersMaselReaction(dynamic_cast<BlowersMaselReaction&>(*r));
+    } else {
         throw CanteraError("GasKinetics::addReaction",
-            "Unknown reaction type specified: {}", r->reaction_type);
+            "Unknown reaction type specified: '{}'", r->type());
     }
     return true;
 }
@@ -286,7 +298,7 @@ void GasKinetics::addFalloffReaction(FalloffReaction& r)
     concm_falloff_values.resize(m_falloff_concm.workSize());
 
     // install the falloff function calculator for this reaction
-    m_falloffn.install(nfall, r.reaction_type, r.falloff);
+    m_falloffn.install(nfall, r.type(), r.falloff);
     falloff_work.resize(m_falloffn.workSize());
 }
 
@@ -319,31 +331,38 @@ void GasKinetics::addChebyshevReaction(ChebyshevReaction& r)
     m_cheb_rates.install(nReactions()-1, r.rate);
 }
 
+void GasKinetics::addBlowersMaselReaction(BlowersMaselReaction& r)
+{
+    m_blowersmasel_rates.install(nReactions()-1, r.rate);
+}
+
 void GasKinetics::modifyReaction(size_t i, shared_ptr<Reaction> rNew)
 {
-    // operations common to all reaction types
+    // operations common to all bulk reaction types
     BulkKinetics::modifyReaction(i, rNew);
 
-    switch (rNew->reaction_type) {
-    case ELEMENTARY_RXN:
+    if (std::dynamic_pointer_cast<Reaction2>(rNew) != nullptr) {
+        // Rate object already modified in BulkKinetics::modifyReaction
+        return;
+    }
+
+    if (rNew->type() == "elementary") {
         modifyElementaryReaction(i, dynamic_cast<ElementaryReaction&>(*rNew));
-        break;
-    case THREE_BODY_RXN:
+    } else if (rNew->type() == "three-body") {
         modifyThreeBodyReaction(i, dynamic_cast<ThreeBodyReaction&>(*rNew));
-        break;
-    case FALLOFF_RXN:
-    case CHEMACT_RXN:
+    } else if (rNew->type() == "falloff") {
         modifyFalloffReaction(i, dynamic_cast<FalloffReaction&>(*rNew));
-        break;
-    case PLOG_RXN:
+    } else if (rNew->type() == "chemically-activated") {
+        modifyFalloffReaction(i, dynamic_cast<FalloffReaction&>(*rNew));
+    } else if (rNew->type() == "pressure-dependent-Arrhenius") {
         modifyPlogReaction(i, dynamic_cast<PlogReaction&>(*rNew));
-        break;
-    case CHEBYSHEV_RXN:
+    } else if (rNew->type() == "Chebyshev") {
         modifyChebyshevReaction(i, dynamic_cast<ChebyshevReaction&>(*rNew));
-        break;
-    default:
+    } else if (rNew->type() == "Blowers-Masel") {
+        modifyBlowersMaselReaction(i, dynamic_cast<BlowersMaselReaction&>(*rNew));
+    } else {
         throw CanteraError("GasKinetics::modifyReaction",
-            "Unknown reaction type specified: {}", rNew->reaction_type);
+            "Unknown reaction type specified: '{}'", rNew->type());
     }
 
     // invalidate all cached data
@@ -373,6 +392,11 @@ void GasKinetics::modifyPlogReaction(size_t i, PlogReaction& r)
 void GasKinetics::modifyChebyshevReaction(size_t i, ChebyshevReaction& r)
 {
     m_cheb_rates.replace(i, r.rate);
+}
+
+void GasKinetics::modifyBlowersMaselReaction(size_t i, BlowersMaselReaction& r)
+{
+    m_blowersmasel_rates.replace(i, r.rate);
 }
 
 void GasKinetics::init()

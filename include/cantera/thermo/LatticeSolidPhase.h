@@ -434,6 +434,9 @@ public:
     virtual void setParameters(const AnyMap& phaseNode,
                                const AnyMap& rootNode=AnyMap());
     virtual void initThermo();
+    virtual void getParameters(AnyMap& phaseNode) const;
+    virtual void getSpeciesParameters(const std::string& name,
+                                      AnyMap& speciesNode) const;
 
     virtual void setParametersFromXML(const XML_Node& eosdata);
 

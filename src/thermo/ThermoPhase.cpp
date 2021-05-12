@@ -1189,6 +1189,69 @@ void ThermoPhase::setParameters(const AnyMap& phaseNode, const AnyMap& rootNode)
     m_input = phaseNode;
 }
 
+AnyMap ThermoPhase::parameters(bool withInput) const
+{
+    AnyMap out;
+    getParameters(out);
+    if (withInput) {
+        out.update(m_input);
+    }
+    return out;
+}
+
+void ThermoPhase::getParameters(AnyMap& phaseNode) const
+{
+    phaseNode["name"] = name();
+    phaseNode["thermo"] = ThermoFactory::factory()->canonicalize(type());
+    vector<string> elementNames;
+    for (size_t i = 0; i < nElements(); i++) {
+        elementNames.push_back(elementName(i));
+    }
+    phaseNode["elements"] = elementNames;
+    phaseNode["species"] = speciesNames();
+
+    AnyMap state;
+    auto stateVars = nativeState();
+    if (stateVars.count("T")) {
+        state["T"].setQuantity(temperature(), "K");
+    }
+
+    if (stateVars.count("D")) {
+        state["density"].setQuantity(density(), "kg/m^3");
+    } else if (stateVars.count("P")) {
+        state["P"].setQuantity(pressure(), "Pa");
+    }
+
+    if (stateVars.count("Y")) {
+        map<string, double> Y;
+        for (size_t k = 0; k < m_kk; k++) {
+            double Yk = massFraction(k);
+            if (Yk > 0) {
+                Y[speciesName(k)] = Yk;
+            }
+        }
+        state["Y"] = Y;
+        state["Y"].setFlowStyle();
+    } else if (stateVars.count("X")) {
+        map<string, double> X;
+        for (size_t k = 0; k < m_kk; k++) {
+            double Xk = moleFraction(k);
+            if (Xk > 0) {
+                X[speciesName(k)] = Xk;
+            }
+        }
+        state["X"] = X;
+        state["X"].setFlowStyle();
+    }
+
+    phaseNode["state"] = std::move(state);
+
+    static bool reg = AnyMap::addOrderingRules("Phase", {{"tail", "state"}});
+    if (reg) {
+        phaseNode["__type__"] = "Phase";
+    }
+}
+
 const AnyMap& ThermoPhase::input() const
 {
     return m_input;

@@ -418,6 +418,43 @@ void IdealSolidSolnPhase::initThermo()
     ThermoPhase::initThermo();
 }
 
+void IdealSolidSolnPhase::getParameters(AnyMap& phaseNode) const
+{
+    ThermoPhase::getParameters(phaseNode);
+    if (m_formGC == 1) {
+        phaseNode["standard-concentration-basis"] = "species-molar-volume";
+    } else if (m_formGC == 2) {
+        phaseNode["standard-concentration-basis"] = "solvent-molar-volume";
+    }
+}
+
+void IdealSolidSolnPhase::getSpeciesParameters(const std::string &name,
+                                               AnyMap& speciesNode) const
+{
+    ThermoPhase::getSpeciesParameters(name, speciesNode);
+    size_t k = speciesIndex(name);
+    const auto S = species(k);
+    auto& eosNode = speciesNode["equation-of-state"].getMapWhere(
+        "model", "constant-volume", true);
+    // Output volume information in a form consistent with the input
+    if (S->input.hasKey("equation-of-state")) {
+        auto& eosIn = S->input["equation-of-state"];
+        if (eosIn.hasKey("density")) {
+            eosNode["density"].setQuantity(
+                molecularWeight(k) / m_speciesMolarVolume[k], "kg/m^3");
+        } else if (eosIn.hasKey("molar-density")) {
+            eosNode["molar-density"].setQuantity(1.0 / m_speciesMolarVolume[k],
+                                                 "kmol/m^3");
+        } else {
+            eosNode["molar-volume"].setQuantity(m_speciesMolarVolume[k],
+                                                "m^3/kmol");
+        }
+    } else {
+        eosNode["molar-volume"].setQuantity(m_speciesMolarVolume[k],
+                                            "m^3/kmol");
+    }
+}
+
 void IdealSolidSolnPhase::initThermoXML(XML_Node& phaseNode, const std::string& id_)
 {
     if (id_.size() > 0 && phaseNode.id() != id_) {

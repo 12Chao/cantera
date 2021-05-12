@@ -1152,7 +1152,7 @@ class phase:
             else:
                 out['reactions'] = [BlockMap([(r[0], r[1])]) for r in self.reactions]
 
-        if self.transport:
+        if self.transport and self.transport != 'None':
             out['transport'] = _newNames[self.transport]
 
         if self.comment:
@@ -1622,7 +1622,7 @@ def convert(filename=None, output_name=None, text=None):
         # information regarding conversion
         metadata = BlockMap([
             ('generator', 'cti2yaml'),
-            ('cantera-version', '2.6.0a1'),
+            ('cantera-version', '2.6.0a2'),
             ('date', formatdate(localtime=True)),
         ])
         if filename is not None:

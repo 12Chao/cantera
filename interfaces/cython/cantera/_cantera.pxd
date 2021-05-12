@@ -53,14 +53,37 @@ cdef extern from "cantera/base/AnyMap.h" namespace "Cantera":
     cdef cppclass CxxAnyValue "Cantera::AnyValue"
 
     cdef cppclass CxxAnyMap "Cantera::AnyMap":
+        cppclass Iterator:
+            pair[string, CxxAnyValue]& operator*()
+            Iterator& operator++()
+            cbool operator!=(Iterator&)
+
+        cppclass OrderedIterator:
+            pair[string, CxxAnyValue]& operator*()
+            OrderedIterator& operator++()
+            cbool operator!=(OrderedIterator&)
+
+        cppclass OrderedProxy:
+            OrderedIterator begin()
+            OrderedIterator end()
+
         CxxAnyMap()
+        Iterator begin()
+        Iterator end()
+        OrderedProxy ordered() except +translate_exception
         CxxAnyValue& operator[](string) except +translate_exception
+        cbool hasKey(string)
         string keys_str()
+        void applyUnits()
 
     cdef cppclass CxxAnyValue "Cantera::AnyValue":
         CxxAnyValue()
         unordered_map[string, CxxAnyMap*] asMap(string) except +translate_exception
         CxxAnyMap& getMapWhere(string, string) except +translate_exception
+        T& asType "as" [T]() except +translate_exception
+        string type_str()
+        cbool isType "is" [T]()
+        cbool isScalar()
 
     CxxAnyMap AnyMapFromYamlFile "Cantera::AnyMap::fromYamlFile" (string) except +translate_exception
     CxxAnyMap AnyMapFromYamlString "Cantera::AnyMap::fromYamlString" (string) except +translate_exception
@@ -102,6 +125,7 @@ cdef extern from "cantera/thermo/SpeciesThermoInterpType.h":
         double refPressure()
         void reportParameters(size_t&, int&, double&, double&, double&, double* const) except +translate_exception
         int nCoeffs() except +translate_exception
+        CxxAnyMap parameters(cbool) except +translate_exception
 
 cdef extern from "cantera/thermo/SpeciesThermoFactory.h":
     cdef CxxSpeciesThermo* CxxNewSpeciesThermo "Cantera::newSpeciesThermoInterpType"\
@@ -120,6 +144,7 @@ cdef extern from "cantera/thermo/Species.h" namespace "Cantera":
         Composition composition
         double charge
         double size
+        CxxAnyMap parameters(CxxThermoPhase*) except +translate_exception
 
     cdef shared_ptr[CxxSpecies] CxxNewSpecies "newSpecies" (XML_Node&)
     cdef vector[shared_ptr[CxxSpecies]] CxxGetSpecies "getSpecies" (XML_Node&)
@@ -135,6 +160,7 @@ cdef extern from "cantera/base/Solution.h" namespace "Cantera":
         void setThermo(shared_ptr[CxxThermoPhase])
         void setKinetics(shared_ptr[CxxKinetics])
         void setTransport(shared_ptr[CxxTransport])
+        CxxAnyMap parameters(cbool) except +translate_exception
 
     cdef shared_ptr[CxxSolution] CxxNewSolution "Cantera::Solution::create" ()
 
@@ -151,6 +177,7 @@ cdef extern from "cantera/thermo/ThermoPhase.h" namespace "Cantera":
         # miscellaneous
         string type()
         string phaseOfMatter() except +translate_exception
+        void getSpeciesParameters(string, CxxAnyMap&) except +translate_exception
         string report(cbool, double) except +translate_exception
         cbool hasPhaseTransition()
         cbool isPure()
@@ -295,9 +322,12 @@ cdef extern from "cantera/thermo/SurfPhase.h":
         void getCoverages(double*) except +translate_exception
 
 
-cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
+cdef extern from "cantera/kinetics/ReactionFactory.h" namespace "Cantera":
+    cdef shared_ptr[CxxReaction] CxxNewReaction "Cantera::newReaction" (string) except +translate_exception
     cdef shared_ptr[CxxReaction] CxxNewReaction "newReaction" (XML_Node&) except +translate_exception
     cdef shared_ptr[CxxReaction] CxxNewReaction "newReaction" (CxxAnyMap&, CxxKinetics&) except +translate_exception
+
+cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
     cdef vector[shared_ptr[CxxReaction]] CxxGetReactions "getReactions" (XML_Node&) except +translate_exception
     cdef vector[shared_ptr[CxxReaction]] CxxGetReactions "getReactions" (CxxAnyValue&, CxxKinetics&) except +translate_exception
 
@@ -309,16 +339,34 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
         double temperatureExponent()
         double activationEnergy_R()
 
+    cdef cppclass CxxReactionRateBase "Cantera::ReactionRateBase":
+        CxxReactionRateBase()
+        string type()
+        double eval(double) except +translate_exception
+        double eval(double, double) except +translate_exception
+        double ddT(double) except +translate_exception
+        double ddT(double, double) except +translate_exception
+
+    cdef cppclass CxxCustomFunc1Rate "Cantera::CustomFunc1Rate" (CxxReactionRateBase):
+        CxxCustomFunc1Rate()
+        void setRateFunction(shared_ptr[CxxFunc1]) except +translate_exception
+
+    cdef cppclass CxxArrheniusRate "Cantera::ArrheniusRate" (CxxReactionRateBase):
+        CxxArrheniusRate()
+        CxxArrheniusRate(double, double, double)
+        double preExponentialFactor()
+        double temperatureExponent()
+        double activationEnergy_R()
+
     cdef cppclass CxxReaction "Cantera::Reaction":
-        # Note, this default constructor doesn't actually exist. The declaration
-        # is required by a Cython bug which should be resolved in Cython 0.22.
         CxxReaction()
-        CxxReaction(int)
 
         string reactantString()
         string productString()
         string equation()
+        string type()
         void validate() except +translate_exception
+        CxxAnyMap parameters(cbool) except +translate_exception
         int reaction_type
         Composition reactants
         Composition products
@@ -328,6 +376,11 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
         cbool duplicate
         cbool allow_nonreactant_orders
         cbool allow_negative_orders
+
+    cdef cppclass CxxReaction2 "Cantera::Reaction2" (CxxReaction):
+        CxxReaction2()
+        shared_ptr[CxxReactionRateBase] rate()
+        void setRate(shared_ptr[CxxReactionRateBase])
 
     cdef cppclass CxxElementaryReaction "Cantera::ElementaryReaction" (CxxReaction):
         CxxElementaryReaction()
@@ -391,6 +444,28 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
     cdef cppclass CxxChebyshevReaction "Cantera::ChebyshevReaction" (CxxReaction):
         CxxChebyshevRate rate
 
+    cdef cppclass CxxCustomFunc1Reaction "Cantera::CustomFunc1Reaction" (CxxReaction2):
+        CxxCustomFunc1Reaction()
+
+    cdef cppclass CxxTestReaction "Cantera::TestReaction" (CxxReaction2):
+        CxxTestReaction()
+        cbool allow_negative_pre_exponential_factor
+
+    cdef cppclass CxxBlowersMasel "Cantera::BlowersMasel":
+        CxxBlowersMasel()
+        CxxBlowersMasel(double, double, double, double)
+        double updateRC(double, double, double)
+        double preExponentialFactor()
+        double temperatureExponent()
+        double activationEnergy_R(double)
+        double activationEnergy_R0()
+        double bondEnergy()
+
+    cdef cppclass CxxBlowersMaselReaction "Cantera::BlowersMaselReaction"(CxxReaction):
+        CxxBlowersMaselReaction()
+        CxxBlowersMasel rate
+        cbool allow_negative_pre_exponential_factor
+
     cdef cppclass CxxCoverageDependency "Cantera::CoverageDependency":
         CxxCoverageDependency(double, double, double)
         double a
@@ -398,6 +473,12 @@ cdef extern from "cantera/kinetics/Reaction.h" namespace "Cantera":
         double m
 
     cdef cppclass CxxInterfaceReaction "Cantera::InterfaceReaction" (CxxElementaryReaction):
+        stdmap[string, CxxCoverageDependency] coverage_deps
+        cbool is_sticking_coefficient
+        cbool use_motz_wise_correction
+        string sticking_species
+
+    cdef cppclass CxxBlowersMaselInterfaceReaction "Cantera::BlowersMaselInterfaceReaction" (CxxBlowersMaselReaction):
         stdmap[string, CxxCoverageDependency] coverage_deps
         cbool is_sticking_coefficient
         cbool use_motz_wise_correction
@@ -431,6 +512,7 @@ cdef extern from "cantera/kinetics/Kinetics.h" namespace "Cantera":
         shared_ptr[CxxReaction] reaction(size_t) except +translate_exception
         cbool isReversible(int) except +translate_exception
         int reactionType(int) except +translate_exception
+        string reactionTypeStr(int) except +translate_exception
         string reactionString(int) except +translate_exception
         string reactantString(int) except +translate_exception
         string productString(int) except +translate_exception
@@ -470,6 +552,7 @@ cdef extern from "cantera/transport/DustyGasTransport.h" namespace "Cantera":
 cdef extern from "cantera/transport/TransportData.h" namespace "Cantera":
     cdef cppclass CxxTransportData "Cantera::TransportData":
         CxxTransportData()
+        CxxAnyMap parameters(cbool) except +translate_exception
 
     cdef cppclass CxxGasTransportData "Cantera::GasTransportData" (CxxTransportData):
         CxxGasTransportData()
@@ -486,6 +569,15 @@ cdef extern from "cantera/transport/TransportData.h" namespace "Cantera":
         double dispersion_coefficient
         double quadrupole_polarizability
 
+cdef extern from "cantera/base/YamlWriter.h" namespace "Cantera":
+    cdef cppclass CxxYamlWriter "Cantera::YamlWriter":
+        CxxYamlWriter()
+        void addPhase(shared_ptr[CxxSolution]) except +translate_exception
+        string toYamlString() except +translate_exception
+        void toYamlFile(string&) except +translate_exception
+        void setPrecision(int)
+        void skipUserDefined(cbool)
+        void setUnits(stdmap[string, string]&) except +translate_exception
 
 cdef extern from "cantera/equil/MultiPhase.h" namespace "Cantera":
     cdef cppclass CxxMultiPhase "Cantera::MultiPhase":
@@ -961,12 +1053,6 @@ ctypedef void (*transportMethod2d)(CxxTransport*, size_t, double*) except +trans
 ctypedef void (*kineticsMethod1d)(CxxKinetics*, double*) except +translate_exception
 
 # classes
-cdef class Species:
-    cdef shared_ptr[CxxSpecies] _species
-    cdef CxxSpecies* species
-
-    cdef _assign(self, shared_ptr[CxxSpecies] other)
-
 cdef class SpeciesThermo:
     cdef shared_ptr[CxxSpeciesThermo] _spthermo
     cdef CxxSpeciesThermo* spthermo
@@ -991,6 +1077,13 @@ cdef class _SolutionBase:
     cdef np.ndarray _selected_species
     cdef object parent
 
+cdef class Species:
+    cdef shared_ptr[CxxSpecies] _species
+    cdef CxxSpecies* species
+    cdef _SolutionBase _phase
+
+    cdef _assign(self, shared_ptr[CxxSpecies] other)
+
 cdef class ThermoPhase(_SolutionBase):
     cdef double _mass_factor(self)
     cdef double _mole_factor(self)
@@ -1003,14 +1096,35 @@ cdef class ThermoPhase(_SolutionBase):
 cdef class InterfacePhase(ThermoPhase):
     cdef CxxSurfPhase* surf
 
+cdef class _ReactionRate:
+    cdef shared_ptr[CxxReactionRateBase] _base
+    cdef CxxReactionRateBase* base
+
+cdef class CustomRate(_ReactionRate):
+    cdef CxxCustomFunc1Rate* rate
+    cdef Func1 _rate_func
+
+cdef class ArrheniusRate(_ReactionRate):
+    cdef CxxArrheniusRate* rate
+    @staticmethod
+    cdef wrap(shared_ptr[CxxReactionRateBase])
+
 cdef class Reaction:
     cdef shared_ptr[CxxReaction] _reaction
     cdef CxxReaction* reaction
-    cdef _assign(self, shared_ptr[CxxReaction] other)
+    @staticmethod
+    cdef wrap(shared_ptr[CxxReaction])
+
+cdef class CustomReaction(Reaction):
+    cdef CustomRate _rate
 
 cdef class Arrhenius:
     cdef CxxArrhenius* rate
     cdef Reaction reaction # parent reaction, to prevent garbage collection
+
+cdef class BlowersMasel:
+    cdef CxxBlowersMasel* rate
+    cdef Reaction reaction
 
 cdef class Falloff:
     cdef shared_ptr[CxxFalloff] _falloff
@@ -1028,6 +1142,10 @@ cdef class Transport(_SolutionBase):
 cdef class DustyGasTransport(Transport):
      pass
 
+cdef class YamlWriter:
+    cdef shared_ptr[CxxYamlWriter] _writer
+    cdef CxxYamlWriter* writer
+
 cdef class Mixture:
     cdef CxxMultiPhase* mix
     cdef list _phases
@@ -1035,6 +1153,7 @@ cdef class Mixture:
     cpdef int element_index(self, element) except *
 
 cdef class Func1:
+    cdef shared_ptr[CxxFunc1] _func
     cdef CxxFunc1* func
     cdef object callable
     cdef object exception
@@ -1184,7 +1303,6 @@ cdef np.ndarray get_transport_1d(Transport tran, transportMethod1d method)
 cdef np.ndarray get_transport_2d(Transport tran, transportMethod2d method)
 cdef CxxIdealGasPhase* getIdealGasPhase(ThermoPhase phase) except *
 cdef wrapSpeciesThermo(shared_ptr[CxxSpeciesThermo] spthermo)
-cdef Reaction wrapReaction(shared_ptr[CxxReaction] reaction)
 
 cdef extern from "cantera/thermo/Elements.h" namespace "Cantera":
     double getElementWeight(string ename) except +translate_exception

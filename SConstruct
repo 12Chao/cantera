@@ -708,7 +708,7 @@ for arg in ARGUMENTS:
         print('Encountered unexpected command line argument: %r' % arg)
         sys.exit(1)
 
-env['cantera_version'] = "2.6.0a1"
+env["cantera_version"] = "2.6.0a2"
 # For use where pre-release tags are not permitted (MSI, sonames)
 env['cantera_pure_version'] = re.match(r'(\d+\.\d+\.\d+)', env['cantera_version']).group(0)
 env['cantera_short_version'] = re.match(r'(\d+\.\d+)', env['cantera_version']).group(0)
@@ -1029,15 +1029,16 @@ else:
     env['cxx_stdlib'] = []
 
 env['HAS_CLANG'] = conf.CheckDeclaration('__clang__', '', 'C++')
-env['HAS_OPENMP'] = conf.CheckCXXHeader('omp.h', '""')
+env['HAS_OPENMP'] = conf.CheckLibWithHeader("omp", "omp.h", language="C++")
 
 boost_version_source = get_expression_value(['<boost/version.hpp>'], 'BOOST_LIB_VERSION')
 retcode, boost_lib_version = conf.TryRun(boost_version_source, '.cpp')
 env['BOOST_LIB_VERSION'] = '.'.join(boost_lib_version.strip().split('_'))
-print('INFO: Found Boost version {0}'.format(env['BOOST_LIB_VERSION']))
 if not env['BOOST_LIB_VERSION']:
     config_error("Boost could not be found. Install Boost headers or set"
                  " 'boost_inc_dir' to point to the boost headers.")
+else:
+    print('INFO: Found Boost version {0}'.format(env['BOOST_LIB_VERSION']))
 # demangle is availble in Boost 1.55 or newer
 env['has_demangle'] = conf.CheckDeclaration("boost::core::demangle",
                                 '#include <boost/core/demangle.hpp>', 'C++')
@@ -1112,7 +1113,7 @@ if env['system_sundials'] == 'y':
 
     print("""INFO: Using system installation of Sundials version %s.""" % sundials_version)
 
-    #Determine whether or not Sundials was built with BLAS/LAPACK
+    # Determine whether or not Sundials was built with BLAS/LAPACK
     if sundials_ver < parse_version('2.6'):
         # In Sundials 2.4 / 2.5, SUNDIALS_BLAS_LAPACK is either 0 or 1
         sundials_blas_lapack = get_expression_value(['"sundials/sundials_config.h"'],
@@ -1121,10 +1122,24 @@ if env['system_sundials'] == 'y':
         if retcode == 0:
             config_error("Failed to determine Sundials BLAS/LAPACK.")
         env['has_sundials_lapack'] = int(has_sundials_lapack.strip())
-    else:
-        # In Sundials 2.6, SUNDIALS_BLAS_LAPACK is either defined or undefined
+    elif sundials_ver < parse_version('5.5'):
+        # In Sundials 2.6-5.5, SUNDIALS_BLAS_LAPACK is either defined or undefined
         env['has_sundials_lapack'] = conf.CheckDeclaration('SUNDIALS_BLAS_LAPACK',
                 '#include "sundials/sundials_config.h"', 'C++')
+    else:
+        # In Sundials 5.5 and higher, two defines are included specific to the
+        # SUNLINSOL packages indicating whether SUNDIALS has been built with LAPACK
+        lapackband = conf.CheckDeclaration(
+            "SUNDIALS_SUNLINSOL_LAPACKBAND",
+            '#include "sundials/sundials_config.h"',
+            "C++",
+        )
+        lapackdense = conf.CheckDeclaration(
+            "SUNDIALS_SUNLINSOL_LAPACKDENSE",
+            '#include "sundials/sundials_config.h"',
+            "C++",
+        )
+        env["has_sundials_lapack"] = lapackband and lapackdense
 
     # In the case where a user is trying to link Cantera to an external BLAS/LAPACK
     # library, but Sundials was configured without this support, print a Warning.
@@ -1746,6 +1761,7 @@ def postBuildMessage(target, source, env):
     print("*******************************************************")
     print("Compilation completed successfully.\n")
     print("- To run the test suite, type 'scons test'.")
+    print("- To list available tests, type 'scons test-help'.")
     if env['googletest'] == 'none':
         print("  WARNING: You set the 'googletest' to 'none' and all it's tests will be skipped.")
     if os.name == 'nt':

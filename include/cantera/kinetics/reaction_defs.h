@@ -1,6 +1,8 @@
 /**
  *  @file reaction_defs.h
  * This file defines some constants used to specify reaction types.
+ *
+ * @deprecated To be removed after Cantera 2.6.
  */
 
 // This file is part of Cantera. See License.txt in the top-level directory or
@@ -58,12 +60,22 @@ const int PLOG_RXN = 5;
 const int CHEBYSHEV_RXN = 6;
 
 /**
+ * A custom Python reaction
+ */
+const int CUSTOMPY_RXN = 99;
+
+/**
  * A chemical activation reaction. For these reactions, the rate falls
  * off as the pressure increases, due to collisional stabilization of
  * a reaction intermediate. Example: Si + SiH4 (+M) <-> Si2H2 + H2
  * (+M), which competes with Si + SiH4 (+M) <-> Si2H4 (+M).
  */
 const int CHEMACT_RXN = 8;
+
+/**
+ * A reaction to calculate the reaction rate with Blowers Masel approximation
+ */
+const int BLOWERSMASEL_RXN = 9;
 
 /**
  * A reaction occurring on a surface.
@@ -75,6 +87,11 @@ const int SURFACE_RXN = 20;
 
 //! A reaction occurring on an interface, e.g a surface or edge.
 const int INTERFACE_RXN = 20;
+
+//! A reaction occurring on an interface, e.g a surface or edge.
+//! The rate of the reaction can be calculated and updated by Blowers-
+//! Masel approximation
+const int BMINTERFACE_RXN =21;
 
 /**
  * A reaction occurring at a one-dimensional interface between two surface phases.
