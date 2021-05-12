@@ -593,6 +593,14 @@ void InterfaceReaction::getParameters(AnyMap& reactionNode) const
     }
 }
 
+void InterfaceReaction::validate() {
+    ElementaryReaction::validate();
+    if (is_sticking_coefficient != false) {
+        rate.validate(equation());
+    }
+
+}
+
 ElectrochemicalReaction::ElectrochemicalReaction()
     : beta(0.5)
     , exchange_current_density_formulation(false)
@@ -662,6 +670,14 @@ BlowersMaselInterfaceReaction::BlowersMaselInterfaceReaction()
     , use_motz_wise_correction(false)
 {
     reaction_type = BMINTERFACE_RXN;
+}
+
+void BlowersMaselInterfaceReaction::validate()
+{
+    BlowersMaselReaction::validate();
+    if (is_sticking_coefficient != false) {
+        rate.validate(equation());
+    }
 }
 
 BlowersMaselInterfaceReaction::BlowersMaselInterfaceReaction(const Composition& reactants_,
