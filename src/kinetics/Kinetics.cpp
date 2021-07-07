@@ -411,7 +411,7 @@ void Kinetics::getNetRatesOfProgress(doublereal* netROP)
 
 void Kinetics::getReactionDelta(const double* prop, double* deltaProp)
 {
-    fill(deltaProp, deltaProp + nReactions(), 0.0);
+    fill(deltaProp, deltaProp + nReactions(), 0.0); 
     // products add
     m_revProductStoich.incrementReactions(prop, deltaProp);
     m_irrevProductStoich.incrementReactions(prop, deltaProp);
@@ -419,7 +419,7 @@ void Kinetics::getReactionDelta(const double* prop, double* deltaProp)
     m_reactantStoich.decrementReactions(prop, deltaProp);
 }
 
-void Kinetics::getRevReactionDelta(const double* prop, double* deltaProp)
+void Kinetics::getRevReactionDelta(const double* prop, double* deltaProp) 
 {
     fill(deltaProp, deltaProp + nReactions(), 0.0);
     // products add
@@ -639,6 +639,15 @@ shared_ptr<Reaction> Kinetics::reaction(size_t i)
     checkReactionIndex(i);
     return m_reactions[i];
 }
+
+void Kinetics::add_enthalpy_change(size_t i, double Delta_H)
+{
+    for (size_t index=0; index<m_kk; index++) {
+        m_bmH.push_back(0);
+    }
+    m_bmH[i] = Delta_H;
+}
+
 
 shared_ptr<const Reaction> Kinetics::reaction(size_t i) const
 {

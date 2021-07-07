@@ -73,6 +73,43 @@ public:
         return m_rates.size();
     }
 
+
+    // update forward rate according to the enthalpy change saved in Blowers-Masel
+    // enthalpy vector
+    void Blowers_Masel_update(int i, doublereal T, doublereal logT, doublereal* values, double Delta_H) {
+        // std::cout<<rxn_type<< " "<<effectiveActivationEnergy_R(i)<<" "<< effectivePreExponentialFactor(i) <<std::endl;
+        if(Delta_H != 0) {
+            doublereal recipT = 1.0/T; 
+            double A = effectivePreExponentialFactor(i);
+            double b = effectiveTemperatureExponent(i);
+            double new_Ea = 0;
+            // the commeted out line below is used for test only will be deleted in the future
+            // std::cout<< " "<<A<<" "<< E_R<<" "<<b<<" "<< E_change<<std::endl;
+            // Here is a problem that it should have a method to determine the unit 
+            // and the value of gas constant
+            double Ea = effectiveActivationEnergy_R(i) * GasConstant;
+            double low_limit = -4 * Ea;
+            double high_limit = 4 * Ea;
+            if (Ea != 0) {
+                if (Delta_H < low_limit) {
+                    new_Ea += 0;
+                } else if (Delta_H > high_limit) {
+                    new_Ea += Delta_H;
+                }  else {
+                    double Vp = 2 * 1000 * ((1000+Ea) / (1000-Ea));
+                    new_Ea += (1000+Delta_H/2) * pow(Vp-2000+Delta_H, 2) / (pow(Vp,2)-4*pow(1000,2)+pow(Delta_H,2));
+                }
+            }
+            if (Ea == 0) {
+                new_Ea += Delta_H;
+            }
+            
+            doublereal new_RC =  A * std::exp(b*logT - (new_Ea/GasConstant)*recipT);
+            values[m_rxn[i]] = new_RC;
+        }
+        
+    }
+
     //! Return effective preexponent for the specified reaction.
     /*!
      *  Returns effective preexponent, accounting for surface coverage

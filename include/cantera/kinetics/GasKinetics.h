@@ -117,6 +117,7 @@ protected:
 
     //! Update the equilibrium constants in molar units.
     void updateKc();
+    void BlowersMaselupdate();
 };
 
 }

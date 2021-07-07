@@ -812,6 +812,10 @@ public:
     virtual void setRoot(std::shared_ptr<Solution> root) {
         m_root = root;
     }
+    
+    // add enthalpy change to Blowers_Masel enthalpy change vector
+    virtual void add_enthalpy_change(size_t i, double Delta_H);
+
 
 protected:
     //! Cache for saved calculations within each Kinetics object.
@@ -928,7 +932,17 @@ protected:
 
     //! Net rate-of-progress for each reaction
     vector_fp m_ropnet;
+    
+    // vector to save changed activation energy for Blowers-Masel approximation
+    // std::vector<std::map<size_t, double>> m_bmE;
+    // std::map<size_t, doublereal> m_bmE;
+    // vector_fp m_bmE;
 
+    //vector to save the changed species enthalpy for Blowers-Masel approximation
+    vector_fp m_bmH;
+    //  //vector to save the changed reactions enthalpy for Blowers-Masel approximation   
+    vector_fp m_bmH_rxns;
+    
     //! @see skipUndeclaredSpecies()
     bool m_skipUndeclaredSpecies;
 

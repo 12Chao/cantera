@@ -53,6 +53,10 @@ public:
         return m_logA + m_b*logT - m_E*recipT;
     }
 
+    // doublereal updateE(doublereal Ea, doublereal logT, doublereal recipT) const {
+    //     return m_A * std::exp(m_b*logT - Ea*recipT);
+    // }
+
     /**
      * Update the value the rate constant.
      *
@@ -79,6 +83,13 @@ public:
     doublereal activationEnergy_R() const {
         return m_E;
     }
+
+    // This function was meaned to modify the arrhenius reaction rate, but it didn't work, need to figure
+    // out the reason
+    // doublereal update_RC_BM(doublereal logT, doublereal recipT, doublereal E_change) const {
+    //     // m_E = newActivationEnergy;
+    //     return m_A * std::exp(m_b*logT - (m_E+E_change)*recipT);
+    // }
 
 protected:
     doublereal m_logA, m_b, m_E, m_A;
