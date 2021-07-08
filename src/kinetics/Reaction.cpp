@@ -748,7 +748,12 @@ void InterfaceReaction::getParameters(AnyMap& reactionNode) const
 void InterfaceReaction::validate() {
     ElementaryReaction::validate();
     if (is_sticking_coefficient) {
-        rate.validate(equation());
+        try {
+            rate.validate(equation());
+        } catch (CanteraError& err) {
+            throw InputFileError("InterfaceReaction::validate", input,
+                err.getMessage());
+        }
     }
 
 }
@@ -1111,7 +1116,12 @@ void BlowersMaselInterfaceReaction::validate()
 {
     BlowersMaselReaction::validate();
     if (is_sticking_coefficient) {
-        rate.validate(equation());
+        try{
+            rate.validate(equation());
+        } catch (CanteraError& err) {
+            throw InputFileError("BlowersMaselInterfaceReaction::validate", input,
+                err.getMessage());
+        }
     }
 }
 

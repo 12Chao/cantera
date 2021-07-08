@@ -430,7 +430,9 @@ class KineticsRepeatability(utilities.CanteraTest):
                    " at T = 2000.0",
                    " at T = 5000.0",
                    " at T = 10000.0",
-                   " Sticking coefficient is more than 1 for reaction 'OH + PT(S) => OH(S)'"
+                   " Sticking coefficient is more than 1 for reaction 'OH + PT(S) => OH(S)'",
+                   "InputFileError thrown by InterfaceReaction::validate:",
+                   "InputFileError thrown by BlowersMaselInterfaceReaction::validate:"
                    )
         try:
             gas = ct.Solution('sticking_coeff_check.yaml')
