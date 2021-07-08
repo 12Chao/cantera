@@ -1116,7 +1116,7 @@ void BlowersMaselInterfaceReaction::validate()
 {
     BlowersMaselReaction::validate();
     if (is_sticking_coefficient) {
-        try{
+        try {
             rate.validate(equation());
         } catch (CanteraError& err) {
             throw InputFileError("BlowersMaselInterfaceReaction::validate", input,
